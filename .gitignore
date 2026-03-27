@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Estado en tiempo de ejecución (generado por GitHub Actions)
+profit/state/
+asistencia/Asistencia_*.xlsx
+
+# Archivos de Windows / macOS
+Thumbs.db
+.DS_Store
+
+# Scripts PowerShell originales (no se suben al repo)
+AUTOMATIZACIONES/
+automatizacion/

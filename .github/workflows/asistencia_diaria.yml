@@ -1,0 +1,37 @@
+name: Asistencia Diaria
+
+# Venezuela Standard Time = UTC-4 (sin DST)
+# 10:30 AM VET = 14:30 UTC
+# Se ejecuta de lunes a viernes
+
+on:
+  schedule:
+    - cron: "30 14 * * 1-5"
+  workflow_dispatch: # permite ejecución manual desde GitHub
+
+jobs:
+  reporte-diario:
+    name: Reporte de asistencia diaria
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: asistencia/requirements.txt
+
+      - name: Instalar dependencias
+        run: pip install -r asistencia/requirements.txt
+
+      - name: Ejecutar reporte diario
+        run: python asistencia/daily_report.py
+        env:
+          JIBBLE_CLIENT_ID:           ${{ secrets.JIBBLE_CLIENT_ID }}
+          JIBBLE_CLIENT_SECRET:       ${{ secrets.JIBBLE_CLIENT_SECRET }}
+          JIBBLE_ORG_ID:              ${{ secrets.JIBBLE_ORG_ID }}
+          DISCORD_WEBHOOK_ASISTENCIA: ${{ secrets.DISCORD_WEBHOOK_ASISTENCIA }}

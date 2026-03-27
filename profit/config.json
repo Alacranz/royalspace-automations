@@ -1,0 +1,91 @@
+{
+  "company_name": "Royalspace",
+  "timezone": "America/New_York",
+
+  "accounts_private_groups": [
+    {
+      "group_name": "Royalspace Private",
+      "publishers": [
+        "you",
+        "T.I Angela Monroy"
+      ],
+      "facebook_ad_account_id": "act_266001198433130",
+      "active": true
+    }
+  ],
+
+  "media_buyers": [
+    {
+      "display_name": "Edixon Cordova",
+      "publisher_name": "T.I Edixon Cordova Royalspace",
+      "facebook_ad_account_id": "act_1253430079671063",
+      "royalspace_spend_share": 0.5,
+      "media_buyer_spend_share": 0.5,
+      "category": "internal",
+      "active": true
+    },
+    {
+      "display_name": "Esteban Ramirez",
+      "publisher_name": "T.I Esteban Ramirez Royalspace",
+      "facebook_ad_account_id": "act_393472116969724",
+      "royalspace_spend_share": 0.5,
+      "media_buyer_spend_share": 0.5,
+      "category": "internal",
+      "active": true
+    },
+    {
+      "display_name": "Luis Salas",
+      "publisher_name": "T.I Luis Salas",
+      "facebook_ad_account_id": "act_444438538017708",
+      "royalspace_spend_share": 0.5,
+      "media_buyer_spend_share": 0.5,
+      "category": "internal",
+      "active": true
+    },
+    {
+      "display_name": "Clara Castro",
+      "publisher_name": "T.I Clara Castro",
+      "facebook_ad_account_id": "act_1013839483941679",
+      "royalspace_spend_share": 0.5,
+      "media_buyer_spend_share": 0.5,
+      "category": "internal",
+      "active": true
+    },
+    {
+      "display_name": "Douglas Contreras",
+      "publisher_name": "T.I Douglas Contreras Royalspace",
+      "facebook_ad_account_id": "act_449298417453786",
+      "royalspace_spend_share": 0.5,
+      "media_buyer_spend_share": 0.5,
+      "category": "internal",
+      "active": true
+    },
+    {
+      "display_name": "Kevin Pernia",
+      "publisher_name": "T.I Kevin Pernia",
+      "facebook_ad_account_id": "act_1059538342347336",
+      "royalspace_spend_share": 0.5,
+      "media_buyer_spend_share": 0.5,
+      "category": "internal",
+      "active": true
+    },
+    {
+      "display_name": "Sebastian Reyes",
+      "publisher_name": "Sebastian Reyes",
+      "facebook_ad_account_id": "act_5618895554900759",
+      "royalspace_spend_share": 0.5,
+      "media_buyer_spend_share": 0.5,
+      "category": "external",
+      "active": true
+    },
+    {
+      "display_name": "Caribay Flores",
+      "publisher_name": "Caribay Flores",
+      "facebook_ad_account_id": "act_602432986039588",
+      "royalspace_spend_share": 0.5,
+      "media_buyer_spend_share": 0.5,
+      "category": "external",
+      "active": true
+    }
+  ]
+}
