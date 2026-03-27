@@ -1,10 +1,13 @@
-name: Profit — True Profit
+name: Profit — True Profit + MB Alerts
 
 # Corre cada 30 minutos. El script verifica horario laboral internamente:
 #   Lunes-Viernes 08:00-20:00 EST | Sábado 08:00-14:00 EST | Domingo: nunca
 # EST = UTC-5 (EDT = UTC-4 en verano). El script usa America/New_York (pytz).
 #
-# Canal Discord: #mod (DISCORD_WEBHOOK_MOD)
+# Envía 3 mensajes por run:
+#   1. True Profit completo  → DISCORD_WEBHOOK_MOD (#mod)
+#   2. MB Internal Perf.     → DISCORD_WEBHOOK_MB_INTERNAL (#mb-alerts)
+#   3. MB External Perf.     → DISCORD_WEBHOOK_MB_EXTERNAL (servidor externo)
 
 on:
   schedule:
@@ -30,11 +33,13 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r profit/requirements.txt
 
-      - name: Ejecutar True Profit
+      - name: Ejecutar True Profit + MB Alerts
         run: python profit/true_profit.py
         env:
-          RINGBA_API_TOKEN:       ${{ secrets.RINGBA_API_TOKEN }}
-          RINGBA_ACCOUNT_ID:      ${{ secrets.RINGBA_ACCOUNT_ID }}
-          META_ACCESS_TOKEN:      ${{ secrets.META_ACCESS_TOKEN }}
-          META_API_VERSION:       ${{ vars.META_API_VERSION || 'v25.0' }}
-          DISCORD_WEBHOOK_MOD:    ${{ secrets.DISCORD_WEBHOOK_MOD }}
+          RINGBA_API_TOKEN:            ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID:           ${{ secrets.RINGBA_ACCOUNT_ID }}
+          META_ACCESS_TOKEN:           ${{ secrets.META_ACCESS_TOKEN }}
+          META_API_VERSION:            ${{ vars.META_API_VERSION || 'v25.0' }}
+          DISCORD_WEBHOOK_MOD:         ${{ secrets.DISCORD_WEBHOOK_MOD }}
+          DISCORD_WEBHOOK_MB_INTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_INTERNAL }}
+          DISCORD_WEBHOOK_MB_EXTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_EXTERNAL }}
