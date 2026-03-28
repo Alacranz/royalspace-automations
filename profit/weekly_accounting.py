@@ -86,13 +86,13 @@ COL_INDICATOR  = 18  # R
 TOTAL_COLS     = 18
 
 # ── Colores RGB (0.0 – 1.0) ───────────────────────────────────────────────────
-# Basados en las tablas existentes del Sheet (ajustar si es necesario).
-C_HEADER_DATE = {"red": 0.051, "green": 0.106, "blue": 0.224}   # #0D1B39
-C_HEADER_COLS = {"red": 0.090, "green": 0.188, "blue": 0.353}   # #17305A
-C_ROW_ODD     = {"red": 0.102, "green": 0.169, "blue": 0.251}   # #1A2B40
-C_ROW_EVEN    = {"red": 0.145, "green": 0.231, "blue": 0.322}   # #253B52
-C_ROW_TOTAL   = {"red": 0.027, "green": 0.059, "blue": 0.102}   # #070F1A
+# Fallback: se intentan leer de las tablas existentes en el Sheet.
+# Si no hay tablas previas, se usa este azul medio oscuro estándar.
+C_HEADER_DATE = {"red": 0.122, "green": 0.286, "blue": 0.490}   # #1F497D — azul medio
+C_HEADER_COLS = {"red": 0.122, "green": 0.286, "blue": 0.490}   # #1F497D
+C_ROW_TOTAL   = {"red": 0.122, "green": 0.286, "blue": 0.490}   # #1F497D
 C_WHITE       = {"red": 1.0,   "green": 1.0,   "blue": 1.0}
+C_BLACK       = {"red": 0.0,   "green": 0.0,   "blue": 0.0}
 C_GOLD        = {"red": 1.0,   "green": 0.843, "blue": 0.0}     # #FFD700
 C_GRAY_BORDER = {"red": 0.3,   "green": 0.3,   "blue": 0.3}
 
@@ -297,8 +297,9 @@ def find_previous_rows(ws) -> dict:
     """
     Escanea columna A y retorna:
       {mb_name → last_row_number}
-      "_last_data_row" → último row con datos
+      "_last_data_row"  → último row con datos
       "_last_total_row" → último row con "TOTAL"
+      "_last_name_row"  → último row con "Name" (encabezado de columnas)
     """
     mb_names = {mb["sheet_name"] for mb in MB_ORDER}
     col_a    = ws.col_values(1)   # lista 0-indexed, valores de col A
@@ -306,6 +307,7 @@ def find_previous_rows(ws) -> dict:
     result = {name: None for name in mb_names}
     result["_last_data_row"]  = 0
     result["_last_total_row"] = None
+    result["_last_name_row"]  = None   # fila con "Name" (fila 2 de cada tabla)
 
     for idx, val in enumerate(col_a):
         row_num = idx + 1
@@ -316,10 +318,70 @@ def find_previous_rows(ws) -> dict:
         elif cell.upper() == "TOTAL":
             result["_last_total_row"] = row_num
             result["_last_data_row"]  = row_num
+        elif cell.lower() == "name":
+            result["_last_name_row"]  = row_num
+            result["_last_data_row"]  = row_num
         elif cell:
             result["_last_data_row"]  = row_num
 
     return result
+
+
+def _read_cell_bg_color(spreadsheet, sheet_title: str, row: int, col: int) -> dict | None:
+    """
+    Lee el backgroundColor de una celda vía Sheets API.
+    Retorna dict {red, green, blue} o None si la celda es blanca / no tiene color.
+    """
+    try:
+        cell_ref = f"'{sheet_title}'!{col_letter(col)}{row}"
+        resp = spreadsheet.client.request(
+            "GET",
+            f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet.id}",
+            params={
+                "ranges":          cell_ref,
+                "includeGridData": "true",
+                "fields":          "sheets.data.rowData.values.userEnteredFormat.backgroundColor",
+            },
+        )
+        data  = resp.json()
+        color = (
+            data.get("sheets", [{}])[0]
+                .get("data",    [{}])[0]
+                .get("rowData", [{}])[0]
+                .get("values",  [{}])[0]
+                .get("userEnteredFormat", {})
+                .get("backgroundColor")
+        )
+        if not color:
+            return None
+        r = color.get("red",   1.0)
+        g = color.get("green", 1.0)
+        b = color.get("blue",  1.0)
+        # Solo devolver si es significativamente distinto de blanco
+        if r < 0.95 or g < 0.95 or b < 0.95:
+            return {"red": r, "green": g, "blue": b}
+    except Exception as e:
+        print(f"  (no se pudo leer color de celda: {e})")
+    return None
+
+
+def read_existing_header_colors(spreadsheet, ws, name_row: int | None) -> tuple:
+    """
+    Lee los colores de los encabezados de la tabla anterior.
+    name_row: fila con "Name" (fila 2 de la última tabla).
+    Retorna (date_color, cols_color) — usa C_HEADER_DATE/COLS como fallback.
+    """
+    if not name_row or name_row < 2:
+        return C_HEADER_DATE, C_HEADER_COLS
+
+    date_color = _read_cell_bg_color(spreadsheet, ws.title, name_row - 1, 1)
+    cols_color = _read_cell_bg_color(spreadsheet, ws.title, name_row,     1)
+
+    date_color = date_color or C_HEADER_DATE
+    cols_color = cols_color or C_HEADER_COLS
+
+    print(f"  Colores leídos del Sheet → date: {date_color}  cols: {cols_color}")
+    return date_color, cols_color
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -469,10 +531,16 @@ def build_table_values(
     return all_rows, mb_row_nums, total_row_n
 
 
-def apply_formatting(spreadsheet, ws, start_row: int) -> None:
+def apply_formatting(
+    spreadsheet, ws, start_row: int,
+    header_colors: tuple | None = None,
+) -> None:
     """
     Aplica colores, negrita y formato numérico a la tabla recién creada.
     Usa el Sheets API a través de gspread.
+
+    header_colors: (date_color, cols_color) leídos del Sheet.
+                   Si es None se usan los colores constantes de arriba.
     """
     sheet_id = ws.id
     mb_count = len(MB_ORDER)
@@ -482,6 +550,9 @@ def apply_formatting(spreadsheet, ws, start_row: int) -> None:
     row_mb_s = start_row + 2
     row_mb_e = start_row + 2 + mb_count - 1
     row_tot  = start_row + 2 + mb_count
+
+    h_date, h_cols = header_colors if header_colors else (C_HEADER_DATE, C_HEADER_COLS)
+    h_total = h_date   # la fila TOTAL usa el mismo color que la fila de fecha
 
     def fmt_req(r1, c1, r2, c2, bg=None, fg=None, bold=None, num_fmt=None):
         """Helper para crear repeatCell requests."""
@@ -519,18 +590,19 @@ def apply_formatting(spreadsheet, ws, start_row: int) -> None:
     reqs = []
 
     # ── Colores de fila ────────────────────────────────────────────────────────
-    reqs.append(fmt_req(row_date, 1, row_date, TOTAL_COLS, C_HEADER_DATE, C_WHITE, True))
-    reqs.append(fmt_req(row_cols, 1, row_cols, TOTAL_COLS, C_HEADER_COLS, C_WHITE, True))
+    # Encabezados: fondo coloreado, texto blanco, negrita
+    reqs.append(fmt_req(row_date, 1, row_date, TOTAL_COLS, h_date, C_WHITE, True))
+    reqs.append(fmt_req(row_cols, 1, row_cols, TOTAL_COLS, h_cols, C_WHITE, True))
     # Royal Prime header → gold
     reqs.append(fmt_req(row_cols, COL_ROYALPRIME, row_cols, COL_ROYALPRIME,
-                        C_HEADER_COLS, C_GOLD, True))
+                        h_cols, C_GOLD, True))
 
-    for i in range(mb_count):
-        rn = row_mb_s + i
-        bg = C_ROW_ODD if i % 2 == 0 else C_ROW_EVEN
-        reqs.append(fmt_req(rn, 1, rn, TOTAL_COLS, bg, C_WHITE, False))
+    # Filas de datos (MB): fondo blanco, texto negro, sin negrita
+    # No se toca el fondo → las celdas quedan del color del sheet (blanco)
+    reqs.append(fmt_req(row_mb_s, 1, row_mb_e, TOTAL_COLS, C_WHITE, C_BLACK, False))
 
-    reqs.append(fmt_req(row_tot, 1, row_tot, TOTAL_COLS, C_ROW_TOTAL, C_WHITE, True))
+    # Fila TOTAL: mismo color que el encabezado de fecha, texto blanco, negrita
+    reqs.append(fmt_req(row_tot, 1, row_tot, TOTAL_COLS, h_total, C_WHITE, True))
 
     # ── Formato numérico: moneda en columnas de valores ────────────────────────
     currency_cols = [COL_REVENUE, COL_ADSPENT, COL_ADSPENT50, COL_PROFIT,
@@ -753,30 +825,28 @@ def write_monthly_table(
                 "fields": "userEnteredFormat(backgroundColor,textFormat)",
             }
         },
-        {   # total row
+        {   # total row — mismo color que encabezado de fecha
             "repeatCell": {
                 "range": grid_range(sheet_id, tot_r, 1, tot_r, MONTH_COLS),
                 "cell":  {"userEnteredFormat": {
-                    "backgroundColor": C_ROW_TOTAL,
+                    "backgroundColor": C_HEADER_DATE,
                     "textFormat": {"bold": True, "foregroundColor": C_WHITE},
                 }},
                 "fields": "userEnteredFormat(backgroundColor,textFormat)",
             }
         },
     ]
-    for i in range(len(monthly_mb_data)):
-        rn = mb_s_r + i
-        bg = C_ROW_ODD if i % 2 == 0 else C_ROW_EVEN
-        fmt_reqs.append({
-            "repeatCell": {
-                "range": grid_range(sheet_id, rn, 1, rn, MONTH_COLS),
-                "cell":  {"userEnteredFormat": {
-                    "backgroundColor": bg,
-                    "textFormat": {"foregroundColor": C_WHITE},
-                }},
-                "fields": "userEnteredFormat(backgroundColor,textFormat)",
-            }
-        })
+    # Filas de datos: fondo blanco, texto negro (sin color de fondo)
+    fmt_reqs.append({
+        "repeatCell": {
+            "range": grid_range(sheet_id, mb_s_r, 1, tot_r - 1, MONTH_COLS),
+            "cell":  {"userEnteredFormat": {
+                "backgroundColor": C_WHITE,
+                "textFormat": {"foregroundColor": C_BLACK},
+            }},
+            "fields": "userEnteredFormat(backgroundColor,textFormat)",
+        }
+    })
     # número formato moneda
     currency_fmt = {"type": "NUMBER", "pattern": "#,##0.00;[RED]-#,##0.00"}
     for c_idx in range(2, 12):  # columns B–K (1-based 2–11)
@@ -807,8 +877,16 @@ def main() -> None:
     mb_config = load_mb_config()
 
     # ── 3. Datos semanales ─────────────────────────────────────────────────────
+    print(f"Rango UTC → Start: {start_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}  "
+          f"End: {end_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}")
     print("Consultando Ringba (weekly)...")
     payouts_weekly = fetch_ringba_payouts(start_utc, end_utc)
+
+    # Log detallado para verificar qué publishers devuelve la API
+    print("  Publishers con payout > 0:")
+    for key, val in sorted(payouts_weekly.items(), key=lambda x: -x[1]):
+        if val > 0:
+            print(f"    '{key}': ${val:.2f}")
 
     print("Consultando Meta (weekly)...")
     spends_weekly = fetch_meta_spends(since_str, until_str, mb_config)
@@ -848,6 +926,7 @@ def main() -> None:
             print(f"  Royal Prime {mb['sheet_name']}: ${royal_prime_map[mb['sheet_name']]:.0f} (payout mes: ${monthly_payout:.2f})")
 
     # ── 5. Construir filas de MB ───────────────────────────────────────────────
+    print("\nResumen semanal por MB:")
     mb_rows_data = []
     for mb in MB_ORDER:
         cfg     = mb_config.get(mb["config_display"]) or {}
@@ -856,6 +935,9 @@ def main() -> None:
 
         payout = payouts_weekly.get(pub_key, 0.0)
         spend  = spends_weekly.get(ad_id, 0.0)
+
+        print(f"  {mb['sheet_name']}: payout=${payout:.2f}  spend=${spend:.2f}"
+              f"  (pub_key='{pub_key}')")
 
         row = {
             "name":               mb["sheet_name"],
@@ -875,6 +957,10 @@ def main() -> None:
     start_row = last_data + 3 if last_data > 0 else 1
     print(f"Último row con datos: {last_data}  →  nueva tabla en fila {start_row}")
 
+    # Leer colores de la tabla anterior para replicarlos exactamente
+    print("Leyendo colores existentes del Sheet...")
+    header_colors = read_existing_header_colors(spreadsheet, ws, prev.get("_last_name_row"))
+
     table_values, mb_row_nums, total_row_n = build_table_values(
         d_inicio, d_fin, mb_rows_data, prev, start_row
     )
@@ -886,8 +972,8 @@ def main() -> None:
     ws.update(rng, table_values, value_input_option="USER_ENTERED")
     print(f"Valores escritos en {rng}")
 
-    # Formatear
-    apply_formatting(spreadsheet, ws, start_row)
+    # Formatear (con los colores leídos del Sheet)
+    apply_formatting(spreadsheet, ws, start_row, header_colors)
     print("Formato aplicado")
 
     # ── 7. Tabla mensual en "2026" (solo última semana) ────────────────────────
