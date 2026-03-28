@@ -121,14 +121,18 @@ def get_publisher_summary(
     Usado por: true_profit, mb_alerts, spend_guard, mb_daily_summary, weekly_accounting
     """
     publisher_map: dict[str, dict] = {}
-    seen_ids:      set[str]        = set()   # deduplicación por inboundCallId
     offset        = 0
     skipped_dupes = 0
     total_count   = 0
     total_fetched = 0
 
+    # Usamos un page size grande para intentar traer todos los records en 1 sola
+    # request y evitar la inestabilidad de paginación con datos históricos.
+    # Si Ringba limita el tamaño, el total_count nos indica cuándo parar.
+    FETCH_SIZE = 10000
+
     for page in range(1, MAX_PAGES + 1):
-        data    = _post_calllogs(token, account_id, start_utc, end_utc, PAGE_SIZE, offset)
+        data    = _post_calllogs(token, account_id, start_utc, end_utc, FETCH_SIZE, offset)
         records = (data.get("report") or {}).get("records") or []
 
         if page == 1:
@@ -137,21 +141,11 @@ def get_publisher_summary(
                 print(f"  [Ringba] Total registros en rango: {total_count}")
             except (ValueError, TypeError):
                 pass
-            if records:
-                print(f"  [Ringba DBG] Campos del primer record: {sorted(records[0].keys())}")
 
         if not records:
             break
 
         for r in records:
-            # Deduplicar por inboundCallId — evita contar el mismo record dos veces
-            # cuando la paginación sin orden estable mueve records entre páginas
-            call_id = str(r.get("inboundCallId") or r.get("callId") or "")
-            if call_id and call_id in seen_ids:
-                continue
-            if call_id:
-                seen_ids.add(call_id)
-
             # Excluir duplicados si se solicita
             if exclude_duplicates and r.get("isDuplicate") is True:
                 skipped_dupes += 1
@@ -183,13 +177,15 @@ def get_publisher_summary(
 
         total_fetched += len(records)
         offset        += len(records)
+        print(f"  [Ringba] Página {page}: {len(records)} records (total: {total_fetched}/{total_count})")
 
+        # Parar cuando tengamos todos los records según totalCount
         if total_count > 0 and offset >= total_count:
             break
-        if len(records) < PAGE_SIZE:
+        # Fallback: si Ringba devolvió menos que lo pedido, no hay más
+        if len(records) < FETCH_SIZE:
             break
 
-    print(f"  [Ringba] Registros procesados: {total_fetched} (únicos: {len(seen_ids)})")
     if exclude_duplicates:
         print(f"  [Ringba] Llamadas duplicadas excluidas: {skipped_dupes}")
 
