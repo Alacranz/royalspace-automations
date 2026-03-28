@@ -186,8 +186,11 @@ def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
             break
 
         for r in records:
-            # Solo llamadas convertidas (= "Paid" en Publisher Summary)
+            # Solo llamadas convertidas y no duplicadas
+            # (replica exactamente Publisher Summary de Ringba: excluye duplicados)
             if r.get("hasConverted") is not True:
+                continue
+            if r.get("isDuplicate") is True:
                 continue
             converted_count += 1
 
@@ -199,7 +202,7 @@ def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
         if len(records) < PAGE_SIZE:
             break
 
-    print(f"  [Ringba] Llamadas convertidas procesadas: {converted_count}")
+    print(f"  [Ringba] Llamadas convertidas no-duplicadas procesadas: {converted_count}")
     return publisher_payout
 
 
