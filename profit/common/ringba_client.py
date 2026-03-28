@@ -157,9 +157,9 @@ def get_publisher_summary(
                 m["connected"]  += 1
             if r.get("hasConverted") is True:
                 m["conversions"] += 1
-            m["revenue"]    += round(to_float(r.get("conversionAmount")), 2)
-            m["payout"]     += round(to_float(r.get("payoutAmount")),     2)
-            m["profit_net"] += round(to_float(r.get("profitNet")),        2)
+            m["revenue"]    += to_float(r.get("conversionAmount"))
+            m["payout"]     += to_float(r.get("payoutAmount"))
+            m["profit_net"] += to_float(r.get("profitNet"))
 
         offset += len(records)
         if len(records) < PAGE_SIZE:
@@ -209,8 +209,8 @@ def get_call_metrics(
                 connected  += 1
             if r.get("hasConverted") is True:
                 conversions += 1
-                revenue     += round(to_float(r.get("conversionAmount")), 2)
-            profit_net += round(to_float(r.get("profitNet")), 2)
+                revenue     += to_float(r.get("conversionAmount"))
+            profit_net += to_float(r.get("profitNet"))
 
         offset += len(records)
         if total_count > 0 and offset >= total_count:
