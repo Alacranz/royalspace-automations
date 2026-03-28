@@ -96,8 +96,6 @@ def _post_calllogs(
         "reportEnd":   end_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "size":        size,
         "offset":      offset,
-        "orderBy":     "callDt",
-        "direction":   "asc",
     }
     resp = requests.post(url, headers=headers, json=body, timeout=60)
     resp.raise_for_status()
@@ -123,17 +121,35 @@ def get_publisher_summary(
     Usado por: true_profit, mb_alerts, spend_guard, mb_daily_summary, weekly_accounting
     """
     publisher_map: dict[str, dict] = {}
-    offset = 0
+    seen_ids:      set[str]        = set()   # deduplicación por inboundCallId
+    offset        = 0
     skipped_dupes = 0
+    total_count   = 0
+    total_fetched = 0
 
     for page in range(1, MAX_PAGES + 1):
         data    = _post_calllogs(token, account_id, start_utc, end_utc, PAGE_SIZE, offset)
         records = (data.get("report") or {}).get("records") or []
 
+        if page == 1:
+            try:
+                total_count = int((data.get("report") or {}).get("totalCount") or 0)
+                print(f"  [Ringba] Total registros en rango: {total_count}")
+            except (ValueError, TypeError):
+                pass
+
         if not records:
             break
 
         for r in records:
+            # Deduplicar por inboundCallId — evita contar el mismo record dos veces
+            # cuando la paginación sin orden estable mueve records entre páginas
+            call_id = str(r.get("inboundCallId") or r.get("callId") or "")
+            if call_id and call_id in seen_ids:
+                continue
+            if call_id:
+                seen_ids.add(call_id)
+
             # Excluir duplicados si se solicita
             if exclude_duplicates and r.get("isDuplicate") is True:
                 skipped_dupes += 1
@@ -163,10 +179,15 @@ def get_publisher_summary(
             m["payout"]     += to_float(r.get("payoutAmount"))
             m["profit_net"] += to_float(r.get("profitNet"))
 
-        offset += len(records)
+        total_fetched += len(records)
+        offset        += len(records)
+
+        if total_count > 0 and offset >= total_count:
+            break
         if len(records) < PAGE_SIZE:
             break
 
+    print(f"  [Ringba] Registros procesados: {total_fetched} (únicos: {len(seen_ids)})")
     if exclude_duplicates:
         print(f"  [Ringba] Llamadas duplicadas excluidas: {skipped_dupes}")
 
