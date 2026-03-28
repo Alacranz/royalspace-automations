@@ -186,23 +186,28 @@ def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
             break
 
         for r in records:
-            # Solo llamadas convertidas y no duplicadas
-            # (replica exactamente Publisher Summary de Ringba: excluye duplicados)
+            # Solo llamadas convertidas (hasConverted=True)
+            # En Ringba: "Converted" = el afiliado/publisher cobra su payout
+            # "Paid" es distinto: son las que pagan a la empresa (revenue)
             if r.get("hasConverted") is not True:
-                continue
-            if r.get("isDuplicate") is True:
                 continue
             converted_count += 1
 
             raw = str(r.get("publisherName") or "")
             key = normalize_name(raw) or "unknown"
+            # Imprimir detalle de Esteban para diagnóstico
+            if "esteban" in key:
+                print(f"    [DBG] {key}: payoutAmount={r.get('payoutAmount')}  isDuplicate={r.get('isDuplicate')}  isIncomplete={r.get('isIncomplete')}")
             publisher_payout[key] = publisher_payout.get(key, 0.0) + to_float(r.get("payoutAmount"))
 
         offset += len(records)
         if len(records) < PAGE_SIZE:
             break
 
-    print(f"  [Ringba] Llamadas convertidas no-duplicadas procesadas: {converted_count}")
+    print(f"  [Ringba] Llamadas convertidas procesadas: {converted_count}")
+    print(f"  [Ringba] Payout por publisher:")
+    for k, v in sorted(publisher_payout.items(), key=lambda x: -x[1]):
+        print(f"    {k}: ${v:.2f}")
     return publisher_payout
 
 
