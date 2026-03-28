@@ -170,6 +170,40 @@ def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
     (sistema de alertas cada 30 minutos), que el usuario confirmó muestra
     el payout correcto tal como aparece en Ringba en ese momento.
     """
+    from common.ringba_client import _post_calllogs, PAGE_SIZE, MAX_PAGES, to_float
+
+    # ── Diagnóstico: log de cada llamada con payoutAmount > 0 para Esteban ──
+    print("  [DBG] Llamadas con payoutAmount > 0 para Esteban:")
+    dbg_offset = 0
+    dbg_total  = 0.0
+    dbg_count  = 0
+    for _page in range(1, MAX_PAGES + 1):
+        data    = _post_calllogs(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc, PAGE_SIZE, dbg_offset)
+        records = (data.get("report") or {}).get("records") or []
+        if not records:
+            break
+        for r in records:
+            raw = str(r.get("publisherName") or "")
+            if "esteban" not in normalize_name(raw):
+                continue
+            pa = to_float(r.get("payoutAmount"))
+            if pa <= 0:
+                continue
+            dbg_count += 1
+            dbg_total += pa
+            print(
+                f"    #{dbg_count:03d}  payout=${pa:.4f}"
+                f"  converted={r.get('hasConverted')}"
+                f"  duplicate={r.get('isDuplicate')}"
+                f"  incomplete={r.get('isIncomplete')}"
+                f"  connected={r.get('hasConnected')}"
+            )
+        dbg_offset += len(records)
+        if len(records) < PAGE_SIZE:
+            break
+    print(f"  [DBG] Total Esteban payoutAmount>0: {dbg_count} llamadas = ${dbg_total:.2f}")
+    # ────────────────────────────────────────────────────────────────────────
+
     pub_map = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
     result  = {key: data["payout"] for key, data in pub_map.items()}
 
