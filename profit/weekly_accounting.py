@@ -70,20 +70,18 @@ COL_REVENUE    = 2   # B  — payout de Ringba (positivo)
 COL_ADSPENT    = 3   # C  — gasto Meta (negativo → convención contable)
 COL_ADSPENT50  = 4   # D  = C*50%
 COL_PROFIT     = 5   # E  = B+D
-COL_F          = 6   # F  — vacío / manual
-COL_G          = 7   # G  — vacío / manual
-COL_SPENTPLUS  = 8   # H  = M semana anterior
-COL_SPENT      = 9   # I  — manual / penalidad asistencia (última semana)
-COL_ROYALPRIME = 10  # J  — solo última semana del mes
-COL_PROFITLOSS = 11  # K  = B+F+G+H+I+J+(C*50%)
-COL_PAYMENT    = 12  # L  — manual
-COL_FUTUREDEBT = 13  # M  = K-L
-COL_NOTA       = 14  # N  — manual
-COL_PAGADO     = 15  # O  — manual
-COL_REVDIF     = 16  # P
-COL_PROFITDIF  = 17  # Q
-COL_INDICATOR  = 18  # R
-TOTAL_COLS     = 18
+COL_SPENTPLUS  = 6   # F  = M semana anterior
+COL_SPENT      = 7   # G  — manual / penalidad asistencia (última semana)
+COL_ROYALPRIME = 8   # H  — solo última semana del mes
+COL_PROFITLOSS = 9   # I  = B+F+G+H+(C*50%)
+COL_PAYMENT    = 10  # J  — manual
+COL_FUTUREDEBT = 11  # K  = I-J
+COL_NOTA       = 12  # L  — manual
+COL_PAGADO     = 13  # M  — manual
+COL_REVDIF     = 14  # N
+COL_PROFITDIF  = 15  # O
+COL_INDICATOR  = 16  # P
+TOTAL_COLS     = 16
 
 # ── Colores RGB (0.0 – 1.0) ───────────────────────────────────────────────────
 # Fallback: se intentan leer de las tablas existentes en el Sheet.
@@ -413,7 +411,7 @@ def build_table_values(
     start_row: int,
 ) -> tuple[list[list], dict, int]:
     """
-    Construye la matriz de valores (11 filas × 18 columnas).
+    Construye la matriz de valores (11 filas × 16 columnas).
     Retorna: (rows, {mb_name → sheet_row_number}, total_row_number)
 
     Convención de adspent: se almacena negativo (gasto).
@@ -452,8 +450,6 @@ def build_table_values(
 
         B = cr(row_n, COL_REVENUE)
         C = cr(row_n, COL_ADSPENT)
-        F = cr(row_n, COL_F)
-        G = cr(row_n, COL_G)
         H = cr(row_n, COL_SPENTPLUS)
         I = cr(row_n, COL_SPENT)
         J = cr(row_n, COL_ROYALPRIME)
@@ -477,7 +473,7 @@ def build_table_values(
         row[COL_SPENTPLUS - 1]  = h_val
         row[COL_SPENT - 1]      = mb.get("attendance_penalty") or ""
         row[COL_ROYALPRIME - 1] = mb.get("royal_prime") or ""
-        row[COL_PROFITLOSS - 1] = f"={B}+{F}+{G}+{H}+{I}+{J}+({C}*50%)"
+        row[COL_PROFITLOSS - 1] = f"={B}+{H}+{I}+{J}+({C}*50%)"
         row[COL_PAYMENT - 1]    = ""
         row[COL_FUTUREDEBT - 1] = f"={K}-{L}"
         row[COL_NOTA - 1]       = ""
@@ -613,27 +609,27 @@ def apply_formatting(
     reqs = []
 
     # ── Colores de fila ────────────────────────────────────────────────────────
-    # N–O (cols 14–15) nunca reciben color — son anotación manual.
-    # Encabezados: A–M (1–13) y P–R (16–18) coloreados; N–O blanco explícito.
-    reqs.append(fmt_req(row_date, 1,  row_date, 13,         h_date,  C_WHITE, True))
-    reqs.append(fmt_req(row_date, 14, row_date, 15,         C_WHITE, None,    None))
-    reqs.append(fmt_req(row_date, 16, row_date, TOTAL_COLS, h_date,  C_WHITE, True))
-    reqs.append(fmt_req(row_cols, 1,  row_cols, 13,         h_cols,  C_WHITE, True))
-    reqs.append(fmt_req(row_cols, 14, row_cols, 15,         C_WHITE, None,    None))
-    reqs.append(fmt_req(row_cols, 16, row_cols, TOTAL_COLS, h_cols,  C_WHITE, True))
+    # L–M (cols 12–13) nunca reciben color — son anotación manual.
+    # Encabezados: A–K (1–11) y N–P (14–16) coloreados; L–M blanco explícito.
+    reqs.append(fmt_req(row_date, 1,  row_date, 11,         h_date,  C_WHITE, True))
+    reqs.append(fmt_req(row_date, 12, row_date, 13,         C_WHITE, None,    None))
+    reqs.append(fmt_req(row_date, 14, row_date, TOTAL_COLS, h_date,  C_WHITE, True))
+    reqs.append(fmt_req(row_cols, 1,  row_cols, 11,         h_cols,  C_WHITE, True))
+    reqs.append(fmt_req(row_cols, 12, row_cols, 13,         C_WHITE, None,    None))
+    reqs.append(fmt_req(row_cols, 14, row_cols, TOTAL_COLS, h_cols,  C_WHITE, True))
     # Royal Prime header → gold
     reqs.append(fmt_req(row_cols, COL_ROYALPRIME, row_cols, COL_ROYALPRIME,
                         h_cols, C_GOLD, True))
 
-    # Filas de datos (MB): celeste en A–M y P–R; N–O blanco
-    reqs.append(fmt_req(row_mb_s, 1,  row_mb_e, 13,         h_data, C_BLACK, False))
-    reqs.append(fmt_req(row_mb_s, 14, row_mb_e, 15,         C_WHITE, None,   None))
-    reqs.append(fmt_req(row_mb_s, 16, row_mb_e, TOTAL_COLS, h_data, C_BLACK, False))
+    # Filas de datos (MB): celeste en A–K y N–P; L–M blanco
+    reqs.append(fmt_req(row_mb_s, 1,  row_mb_e, 11,         h_data, C_BLACK, False))
+    reqs.append(fmt_req(row_mb_s, 12, row_mb_e, 13,         C_WHITE, None,   None))
+    reqs.append(fmt_req(row_mb_s, 14, row_mb_e, TOTAL_COLS, h_data, C_BLACK, False))
 
-    # Fila TOTAL: A–M y P–R coloreados; N–O blanco
-    reqs.append(fmt_req(row_tot, 1,  row_tot, 13,         h_total, C_WHITE, True))
-    reqs.append(fmt_req(row_tot, 14, row_tot, 15,         C_WHITE, None,    None))
-    reqs.append(fmt_req(row_tot, 16, row_tot, TOTAL_COLS, h_total, C_WHITE, True))
+    # Fila TOTAL: A–K y N–P coloreados; L–M blanco
+    reqs.append(fmt_req(row_tot, 1,  row_tot, 11,         h_total, C_WHITE, True))
+    reqs.append(fmt_req(row_tot, 12, row_tot, 13,         C_WHITE, None,    None))
+    reqs.append(fmt_req(row_tot, 14, row_tot, TOTAL_COLS, h_total, C_WHITE, True))
 
     # ── Formato numérico: moneda en columnas de valores ────────────────────────
     currency_cols = [COL_REVENUE, COL_ADSPENT, COL_ADSPENT50, COL_PROFIT,
@@ -659,14 +655,14 @@ def apply_formatting(
         })
 
     # ── Bordes ────────────────────────────────────────────────────────────────
-    # Estructura: A–M = tabla principal  |  N–O = sin bordes  |  P–R = mini-tabla aparte
+    # Estructura: A–K = tabla principal  |  L–M = sin bordes  |  N–P = mini-tabla aparte
     border = {"style": "SOLID", "width": 1, "color": C_GRAY_BORDER}
     no_border = {"style": "NONE"}
 
-    # 1. Tabla principal A–M (columnas 1–13)
+    # 1. Tabla principal A–K (columnas 1–11)
     reqs.append({
         "updateBorders": {
-            "range":           grid_range(sheet_id, row_date, 1, row_tot, 13),
+            "range":           grid_range(sheet_id, row_date, 1, row_tot, 11),
             "top":             border,
             "bottom":          border,
             "left":            border,
@@ -676,10 +672,10 @@ def apply_formatting(
         }
     })
 
-    # 2. Limpiar bordes en N–O (columnas 14–15) — notas manuales, sin tabla
+    # 2. Limpiar bordes en L–M (columnas 12–13) — notas manuales, sin tabla
     reqs.append({
         "updateBorders": {
-            "range":           grid_range(sheet_id, row_date, 14, row_tot, 15),
+            "range":           grid_range(sheet_id, row_date, 12, row_tot, 13),
             "top":             no_border,
             "bottom":          no_border,
             "left":            no_border,
@@ -689,10 +685,10 @@ def apply_formatting(
         }
     })
 
-    # 3. Mini-tabla P–R (columnas 16–18) — Revenue Dif, Profit Dif, Indicator
+    # 3. Mini-tabla N–P (columnas 14–16) — Revenue Dif, Profit Dif, Indicator
     reqs.append({
         "updateBorders": {
-            "range":           grid_range(sheet_id, row_date, 16, row_tot, 18),
+            "range":           grid_range(sheet_id, row_date, 14, row_tot, 16),
             "top":             border,
             "bottom":          border,
             "left":            border,
@@ -717,19 +713,17 @@ def apply_formatting(
         COL_ADSPENT:     90,   # C — Adspent
         COL_ADSPENT50:   90,   # D — Adspent 50%
         COL_PROFIT:      80,   # E — Profit
-        COL_F:           50,   # F — vacío
-        COL_G:           50,   # G — vacío
-        COL_SPENTPLUS:   90,   # H — Spent/plus
-        COL_SPENT:       75,   # I — Spent
-        COL_ROYALPRIME:  90,   # J — Royal Prime
-        COL_PROFITLOSS:  90,   # K — Profit/Loss
-        COL_PAYMENT:     85,   # L — Payment
-        COL_FUTUREDEBT:  90,   # M — Future debt
-        COL_NOTA:        80,   # N — Nota
-        COL_PAGADO:      90,   # O — pagado
-        COL_REVDIF:      85,   # P — Revenue Dif
-        COL_PROFITDIF:   80,   # Q — Profit Dif
-        COL_INDICATOR:   40,   # R — indicador
+        COL_SPENTPLUS:   90,   # F — Spent/plus
+        COL_SPENT:       75,   # G — Spent
+        COL_ROYALPRIME:  90,   # H — Royal Prime
+        COL_PROFITLOSS:  90,   # I — Profit/Loss
+        COL_PAYMENT:     85,   # J — Payment
+        COL_FUTUREDEBT:  90,   # K — Future debt
+        COL_NOTA:        80,   # L — Nota
+        COL_PAGADO:      90,   # M — pagado
+        COL_REVDIF:      85,   # N — Revenue Dif
+        COL_PROFITDIF:   80,   # O — Profit Dif
+        COL_INDICATOR:   40,   # P — indicador
     }
     for col, px in col_widths.items():
         reqs.append({
