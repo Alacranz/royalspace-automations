@@ -7,7 +7,7 @@ spend_guard y ringba_monitor.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import pytz
@@ -121,71 +121,68 @@ def get_publisher_summary(
     Usado por: true_profit, mb_alerts, spend_guard, mb_daily_summary, weekly_accounting
     """
     publisher_map: dict[str, dict] = {}
-    offset        = 0
     skipped_dupes = 0
-    total_count   = 0
     total_fetched = 0
 
-    # Usamos un page size grande para intentar traer todos los records en 1 sola
-    # request y evitar la inestabilidad de paginación con datos históricos.
-    # Si Ringba limita el tamaño, el total_count nos indica cuándo parar.
-    FETCH_SIZE = 10000
+    # Dividir el rango en chunks diarios para evitar paginación inestable.
+    # Cada día tiene típicamente <1000 records → una sola request por día,
+    # sin paginación multi-página → resultados estables y reproducibles.
+    chunk_start = start_utc
+    day_num     = 0
 
-    for page in range(1, MAX_PAGES + 1):
-        data    = _post_calllogs(token, account_id, start_utc, end_utc, FETCH_SIZE, offset)
-        records = (data.get("report") or {}).get("records") or []
+    while chunk_start < end_utc:
+        day_num    += 1
+        chunk_end   = min(chunk_start + timedelta(hours=24) - timedelta(seconds=1), end_utc)
+        day_fetched = 0
+        offset      = 0
 
-        if page == 1:
-            try:
-                total_count = int((data.get("report") or {}).get("totalCount") or 0)
-                print(f"  [Ringba] Total registros en rango: {total_count}")
-            except (ValueError, TypeError):
-                pass
+        for page in range(1, MAX_PAGES + 1):
+            data    = _post_calllogs(token, account_id, chunk_start, chunk_end, PAGE_SIZE, offset)
+            records = (data.get("report") or {}).get("records") or []
 
-        if not records:
-            break
+            if not records:
+                break
 
-        for r in records:
-            # Excluir duplicados si se solicita
-            if exclude_duplicates and r.get("isDuplicate") is True:
-                skipped_dupes += 1
-                continue
+            for r in records:
+                if exclude_duplicates and r.get("isDuplicate") is True:
+                    skipped_dupes += 1
+                    continue
 
-            raw = str(r.get("publisherName") or "")
-            key = normalize_name(raw) or "unknown"
+                raw = str(r.get("publisherName") or "")
+                key = normalize_name(raw) or "unknown"
 
-            if key not in publisher_map:
-                publisher_map[key] = {
-                    "raw":        raw,
-                    "revenue":    0.0,
-                    "payout":     0.0,
-                    "calls":      0,
-                    "connected":  0,
-                    "conversions": 0,
-                    "profit_net": 0.0,
-                }
+                if key not in publisher_map:
+                    publisher_map[key] = {
+                        "raw":         raw,
+                        "revenue":     0.0,
+                        "payout":      0.0,
+                        "calls":       0,
+                        "connected":   0,
+                        "conversions": 0,
+                        "profit_net":  0.0,
+                    }
 
-            m = publisher_map[key]
-            m["calls"] += 1
-            if r.get("hasConnected") is True:
-                m["connected"]  += 1
-            if r.get("hasConverted") is True:
-                m["conversions"] += 1
-            m["revenue"]    += to_float(r.get("conversionAmount"))
-            m["payout"]     += to_float(r.get("payoutAmount"))
-            m["profit_net"] += to_float(r.get("profitNet"))
+                m = publisher_map[key]
+                m["calls"] += 1
+                if r.get("hasConnected") is True:
+                    m["connected"]  += 1
+                if r.get("hasConverted") is True:
+                    m["conversions"] += 1
+                m["revenue"]    += to_float(r.get("conversionAmount"))
+                m["payout"]     += to_float(r.get("payoutAmount"))
+                m["profit_net"] += to_float(r.get("profitNet"))
 
-        total_fetched += len(records)
-        offset        += len(records)
-        print(f"  [Ringba] Página {page}: {len(records)} records (total: {total_fetched}/{total_count})")
+            day_fetched   += len(records)
+            total_fetched += len(records)
+            offset        += len(records)
 
-        # Parar cuando tengamos todos los records según totalCount
-        if total_count > 0 and offset >= total_count:
-            break
-        # Fallback: si Ringba devolvió menos que lo pedido, no hay más
-        if len(records) < FETCH_SIZE:
-            break
+            if len(records) < PAGE_SIZE:
+                break
 
+        print(f"  [Ringba] Día {day_num} ({chunk_start.strftime('%m/%d')}): {day_fetched} records")
+        chunk_start += timedelta(hours=24)
+
+    print(f"  [Ringba] Total procesados: {total_fetched}")
     if exclude_duplicates:
         print(f"  [Ringba] Llamadas duplicadas excluidas: {skipped_dupes}")
 
