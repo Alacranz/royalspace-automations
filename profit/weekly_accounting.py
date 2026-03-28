@@ -165,10 +165,49 @@ def load_mb_config() -> dict:
 def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
     """
     Retorna {normalized_publisher_name → payout}.
-    Usa el mismo método que true_profit.py (todos los call logs, sin filtros adicionales).
+    También imprime estadísticas de flags de llamadas para diagnosticar
+    discrepancias entre el call logs API y la UI de Ringba Publisher Summary.
     """
-    summary = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
-    return {k: v["payout"] for k, v in summary.items()}
+    from common.ringba_client import _post_calllogs, PAGE_SIZE, MAX_PAGES
+    from common.ringba_client import normalize_name, to_float
+
+    publisher_payout : dict[str, float] = {}
+    all_fields       : set  = set()
+    flag_counts      : dict = {}   # field → count of True values
+    total_records    = 0
+    offset           = 0
+
+    for page in range(1, MAX_PAGES + 1):
+        data    = _post_calllogs(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc, PAGE_SIZE, offset)
+        records = (data.get("report") or {}).get("records") or []
+        if not records:
+            break
+
+        # Registrar todos los campos disponibles (primera página)
+        if page == 1:
+            all_fields = set(records[0].keys())
+
+        for r in records:
+            total_records += 1
+            # Contar flags booleanos para diagnóstico
+            for field in ("isDuplicate", "hasReturned", "isIncomplete",
+                          "isLive", "hasPreviouslyConnected",
+                          "hasConnected", "hasConverted"):
+                if r.get(field) is True:
+                    flag_counts[field] = flag_counts.get(field, 0) + 1
+
+            raw = str(r.get("publisherName") or "")
+            key = normalize_name(raw) or "unknown"
+            publisher_payout[key] = publisher_payout.get(key, 0.0) + to_float(r.get("payoutAmount"))
+
+        offset += len(records)
+        if len(records) < PAGE_SIZE:
+            break
+
+    print(f"  [Ringba] Total registros: {total_records}")
+    print(f"  [Ringba] Todos los campos: {sorted(all_fields)}")
+    print(f"  [Ringba] Conteo de flags: {flag_counts}")
+    return publisher_payout
 
 
 def fetch_meta_spends(since: str, until: str, mb_config: dict) -> dict[str, float]:
