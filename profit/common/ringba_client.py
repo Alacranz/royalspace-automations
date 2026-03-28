@@ -96,6 +96,8 @@ def _post_calllogs(
         "reportEnd":   end_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "size":        size,
         "offset":      offset,
+        "orderBy":     "callDt",
+        "direction":   "asc",
     }
     resp = requests.post(url, headers=headers, json=body, timeout=60)
     resp.raise_for_status()
