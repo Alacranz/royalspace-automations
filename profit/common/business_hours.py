@@ -21,7 +21,12 @@ EST = pytz.timezone("America/New_York")
 def is_business_hours(now: datetime | None = None) -> bool:
     """
     True si el momento dado (o ahora UTC) cae dentro del horario laboral en EST.
+    Se puede omitir con la variable de entorno FORCE_RUN=true (para pruebas manuales).
     """
+    import os
+    if os.environ.get("FORCE_RUN", "").lower() == "true":
+        return True
+
     if now is None:
         now = datetime.now(timezone.utc)
 
