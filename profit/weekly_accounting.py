@@ -165,16 +165,18 @@ def load_mb_config() -> dict:
 def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
     """
     Retorna {normalized_publisher_name → payout}.
-    También imprime estadísticas de flags de llamadas para diagnosticar
-    discrepancias entre el call logs API y la UI de Ringba Publisher Summary.
+
+    Solo cuenta payoutAmount de llamadas donde hasConverted=True.
+    Esto replica exactamente la columna "Payout" del Publisher Summary de Ringba,
+    que solo incluye llamadas "Paid" (convertidas / cobradas por el buyer).
+    Las llamadas conectadas-no-convertidas reciben una tarifa de conexión que
+    el API incluye en payoutAmount pero el Publisher Summary excluye del Payout.
     """
     from common.ringba_client import _post_calllogs, PAGE_SIZE, MAX_PAGES
     from common.ringba_client import normalize_name, to_float
 
-    publisher_payout : dict[str, float] = {}
-    all_fields       : set  = set()
-    flag_counts      : dict = {}   # field → count of True values
-    total_records    = 0
+    publisher_payout: dict[str, float] = {}
+    converted_count  = 0
     offset           = 0
 
     for page in range(1, MAX_PAGES + 1):
@@ -183,18 +185,11 @@ def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
         if not records:
             break
 
-        # Registrar todos los campos disponibles (primera página)
-        if page == 1:
-            all_fields = set(records[0].keys())
-
         for r in records:
-            total_records += 1
-            # Contar flags booleanos para diagnóstico
-            for field in ("isDuplicate", "hasReturned", "isIncomplete",
-                          "isLive", "hasPreviouslyConnected",
-                          "hasConnected", "hasConverted"):
-                if r.get(field) is True:
-                    flag_counts[field] = flag_counts.get(field, 0) + 1
+            # Solo llamadas convertidas (= "Paid" en Publisher Summary)
+            if r.get("hasConverted") is not True:
+                continue
+            converted_count += 1
 
             raw = str(r.get("publisherName") or "")
             key = normalize_name(raw) or "unknown"
@@ -204,9 +199,7 @@ def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
         if len(records) < PAGE_SIZE:
             break
 
-    print(f"  [Ringba] Total registros: {total_records}")
-    print(f"  [Ringba] Todos los campos: {sorted(all_fields)}")
-    print(f"  [Ringba] Conteo de flags: {flag_counts}")
+    print(f"  [Ringba] Llamadas convertidas procesadas: {converted_count}")
     return publisher_payout
 
 
