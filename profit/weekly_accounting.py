@@ -47,7 +47,8 @@ DATE_INICIO_STR = os.environ["DATE_INICIO"]   # DD/MM/YYYY
 DATE_FIN_STR    = os.environ["DATE_FIN"]      # DD/MM/YYYY
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
-EST         = pytz.timezone("America/New_York")
+EST         = pytz.timezone("America/New_York")   # horario laboral y Meta
+VET         = pytz.timezone("America/Caracas")    # UTC-4 fijo — igual que Ringba UI
 
 # ── Orden fijo de Media Buyers ─────────────────────────────────────────────────
 # sheet_name    : nombre que aparece en columna A del sheet
@@ -85,15 +86,15 @@ COL_INDICATOR  = 18  # R
 TOTAL_COLS     = 18
 
 # ── Colores RGB (0.0 – 1.0) ───────────────────────────────────────────────────
-# Ajustar aquí si el sheet usa colores distintos.
-C_HEADER_DATE = {"red": 0.078, "green": 0.141, "blue": 0.267}   # #142448
-C_HEADER_COLS = {"red": 0.122, "green": 0.220, "blue": 0.392}   # #1F3864
-C_ROW_ODD     = {"red": 0.110, "green": 0.157, "blue": 0.200}   # #1C2832
-C_ROW_EVEN    = {"red": 0.165, "green": 0.227, "blue": 0.298}   # #2A3A4C
-C_ROW_TOTAL   = {"red": 0.047, "green": 0.047, "blue": 0.047}   # #0C0C0C
+# Basados en las tablas existentes del Sheet (ajustar si es necesario).
+C_HEADER_DATE = {"red": 0.051, "green": 0.106, "blue": 0.224}   # #0D1B39
+C_HEADER_COLS = {"red": 0.090, "green": 0.188, "blue": 0.353}   # #17305A
+C_ROW_ODD     = {"red": 0.102, "green": 0.169, "blue": 0.251}   # #1A2B40
+C_ROW_EVEN    = {"red": 0.145, "green": 0.231, "blue": 0.322}   # #253B52
+C_ROW_TOTAL   = {"red": 0.027, "green": 0.059, "blue": 0.102}   # #070F1A
 C_WHITE       = {"red": 1.0,   "green": 1.0,   "blue": 1.0}
 C_GOLD        = {"red": 1.0,   "green": 0.843, "blue": 0.0}     # #FFD700
-C_GRAY_BORDER = {"red": 0.5,   "green": 0.5,   "blue": 0.5}
+C_GRAY_BORDER = {"red": 0.3,   "green": 0.3,   "blue": 0.3}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -108,10 +109,11 @@ def parse_dates():
     d_inicio = datetime.strptime(DATE_INICIO_STR, "%d/%m/%Y")
     d_fin    = datetime.strptime(DATE_FIN_STR,    "%d/%m/%Y")
 
-    start_utc = EST.localize(
+    # Usar VET (UTC-4, igual que Ringba UI) para que el rango coincida exactamente
+    start_utc = VET.localize(
         datetime(d_inicio.year, d_inicio.month, d_inicio.day, 0, 0, 0)
     ).astimezone(timezone.utc)
-    end_utc = EST.localize(
+    end_utc = VET.localize(
         datetime(d_fin.year, d_fin.month, d_fin.day, 23, 59, 59)
     ).astimezone(timezone.utc)
 
@@ -127,10 +129,10 @@ def is_last_week_of_month(d_fin: datetime) -> bool:
 
 
 def month_utc_range(year: int, month: int):
-    """UTC range del mes completo."""
+    """UTC range del mes completo (en VET, igual que Ringba UI)."""
     days = monthrange(year, month)[1]
-    start = EST.localize(datetime(year, month, 1, 0, 0, 0)).astimezone(timezone.utc)
-    end   = EST.localize(datetime(year, month, days, 23, 59, 59)).astimezone(timezone.utc)
+    start = VET.localize(datetime(year, month, 1, 0, 0, 0)).astimezone(timezone.utc)
+    end   = VET.localize(datetime(year, month, days, 23, 59, 59)).astimezone(timezone.utc)
     return start, end
 
 
@@ -511,7 +513,7 @@ def apply_formatting(spreadsheet, ws, start_row: int) -> None:
             }
         }
 
-    currency_fmt = {"type": "NUMBER", "pattern": "#,##0.00;[RED]-#,##0.00"}
+    currency_fmt = {"type": "NUMBER", "pattern": "$#,##0.00;[RED]-$#,##0.00"}
     pct_fmt      = {"type": "NUMBER", "pattern": "0.00%;[RED]-0.00%"}
 
     reqs = []
@@ -574,6 +576,41 @@ def apply_formatting(spreadsheet, ws, start_row: int) -> None:
             "mergeType": "MERGE_ALL",
         }
     })
+
+    # ── Anchos de columna (píxeles) ───────────────────────────────────────────
+    col_widths = {
+        COL_NAME:       110,   # A — Name
+        COL_REVENUE:     85,   # B — Revenue
+        COL_ADSPENT:     90,   # C — Adspent
+        COL_ADSPENT50:   90,   # D — Adspent 50%
+        COL_PROFIT:      80,   # E — Profit
+        COL_F:           50,   # F — vacío
+        COL_G:           50,   # G — vacío
+        COL_SPENTPLUS:   90,   # H — Spent/plus
+        COL_SPENT:       75,   # I — Spent
+        COL_ROYALPRIME:  90,   # J — Royal Prime
+        COL_PROFITLOSS:  90,   # K — Profit/Loss
+        COL_PAYMENT:     85,   # L — Payment
+        COL_FUTUREDEBT:  90,   # M — Future debt
+        COL_NOTA:        80,   # N — Nota
+        COL_PAGADO:      90,   # O — pagado
+        COL_REVDIF:      85,   # P — Revenue Dif
+        COL_PROFITDIF:   80,   # Q — Profit Dif
+        COL_INDICATOR:   40,   # R — indicador
+    }
+    for col, px in col_widths.items():
+        reqs.append({
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId":    sheet_id,
+                    "dimension":  "COLUMNS",
+                    "startIndex": col - 1,
+                    "endIndex":   col,
+                },
+                "properties": {"pixelSize": px},
+                "fields":     "pixelSize",
+            }
+        })
 
     spreadsheet.batch_update({"requests": reqs})
 
