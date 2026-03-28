@@ -166,44 +166,10 @@ def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
     """
     Retorna {normalized_publisher_name → payout}.
 
-    Usa get_publisher_summary() — exactamente el mismo método que true_profit.py
-    (sistema de alertas cada 30 minutos), que el usuario confirmó muestra
-    el payout correcto tal como aparece en Ringba en ese momento.
+    Usa get_publisher_summary() — mismo método que true_profit.py (alertas cada
+    30 min). Suma payoutAmount de todos los registros del rango, igual que la
+    columna Payout del Publisher Summary de Ringba.
     """
-    from common.ringba_client import _post_calllogs, PAGE_SIZE, MAX_PAGES, to_float
-
-    # ── Diagnóstico: log de cada llamada con payoutAmount > 0 para Esteban ──
-    print("  [DBG] Llamadas con payoutAmount > 0 para Esteban:")
-    dbg_offset = 0
-    dbg_total  = 0.0
-    dbg_count  = 0
-    for _page in range(1, MAX_PAGES + 1):
-        data    = _post_calllogs(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc, PAGE_SIZE, dbg_offset)
-        records = (data.get("report") or {}).get("records") or []
-        if not records:
-            break
-        for r in records:
-            raw = str(r.get("publisherName") or "")
-            if "esteban" not in normalize_name(raw):
-                continue
-            pa = to_float(r.get("payoutAmount"))
-            if pa <= 0:
-                continue
-            dbg_count += 1
-            dbg_total += pa
-            print(
-                f"    #{dbg_count:03d}  payout=${pa:.4f}"
-                f"  converted={r.get('hasConverted')}"
-                f"  duplicate={r.get('isDuplicate')}"
-                f"  incomplete={r.get('isIncomplete')}"
-                f"  connected={r.get('hasConnected')}"
-            )
-        dbg_offset += len(records)
-        if len(records) < PAGE_SIZE:
-            break
-    print(f"  [DBG] Total Esteban payoutAmount>0: {dbg_count} llamadas = ${dbg_total:.2f}")
-    # ────────────────────────────────────────────────────────────────────────
-
     pub_map = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
     result  = {key: data["payout"] for key, data in pub_map.items()}
 
@@ -647,18 +613,27 @@ def apply_formatting(
     reqs = []
 
     # ── Colores de fila ────────────────────────────────────────────────────────
-    # Encabezados: fondo coloreado, texto blanco, negrita
-    reqs.append(fmt_req(row_date, 1, row_date, TOTAL_COLS, h_date, C_WHITE, True))
-    reqs.append(fmt_req(row_cols, 1, row_cols, TOTAL_COLS, h_cols, C_WHITE, True))
+    # N–O (cols 14–15) nunca reciben color — son anotación manual.
+    # Encabezados: A–M (1–13) y P–R (16–18) coloreados; N–O blanco explícito.
+    reqs.append(fmt_req(row_date, 1,  row_date, 13,         h_date,  C_WHITE, True))
+    reqs.append(fmt_req(row_date, 14, row_date, 15,         C_WHITE, None,    None))
+    reqs.append(fmt_req(row_date, 16, row_date, TOTAL_COLS, h_date,  C_WHITE, True))
+    reqs.append(fmt_req(row_cols, 1,  row_cols, 13,         h_cols,  C_WHITE, True))
+    reqs.append(fmt_req(row_cols, 14, row_cols, 15,         C_WHITE, None,    None))
+    reqs.append(fmt_req(row_cols, 16, row_cols, TOTAL_COLS, h_cols,  C_WHITE, True))
     # Royal Prime header → gold
     reqs.append(fmt_req(row_cols, COL_ROYALPRIME, row_cols, COL_ROYALPRIME,
                         h_cols, C_GOLD, True))
 
-    # Filas de datos (MB): color celeste (igual al de las tablas anteriores), texto negro
-    reqs.append(fmt_req(row_mb_s, 1, row_mb_e, TOTAL_COLS, h_data, C_BLACK, False))
+    # Filas de datos (MB): celeste en A–M y P–R; N–O blanco
+    reqs.append(fmt_req(row_mb_s, 1,  row_mb_e, 13,         h_data, C_BLACK, False))
+    reqs.append(fmt_req(row_mb_s, 14, row_mb_e, 15,         C_WHITE, None,   None))
+    reqs.append(fmt_req(row_mb_s, 16, row_mb_e, TOTAL_COLS, h_data, C_BLACK, False))
 
-    # Fila TOTAL: mismo color que el encabezado de fecha, texto blanco, negrita
-    reqs.append(fmt_req(row_tot, 1, row_tot, TOTAL_COLS, h_total, C_WHITE, True))
+    # Fila TOTAL: A–M y P–R coloreados; N–O blanco
+    reqs.append(fmt_req(row_tot, 1,  row_tot, 13,         h_total, C_WHITE, True))
+    reqs.append(fmt_req(row_tot, 14, row_tot, 15,         C_WHITE, None,    None))
+    reqs.append(fmt_req(row_tot, 16, row_tot, TOTAL_COLS, h_total, C_WHITE, True))
 
     # ── Formato numérico: moneda en columnas de valores ────────────────────────
     currency_cols = [COL_REVENUE, COL_ADSPENT, COL_ADSPENT50, COL_PROFIT,
