@@ -131,13 +131,8 @@ def get_publisher_summary(
         if not records:
             break
 
-        # Log de campos disponibles en la primera llamada (ayuda a diagnosticar)
-        if page == 1 and records and exclude_duplicates:
-            first_keys = list(records[0].keys())
-            print(f"  [Ringba fields sample]: {first_keys[:25]}")
-
         for r in records:
-            # Excluir duplicados si se solicita (replica el comportamiento de la UI)
+            # Excluir duplicados si se solicita
             if exclude_duplicates and r.get("isDuplicate") is True:
                 skipped_dupes += 1
                 continue

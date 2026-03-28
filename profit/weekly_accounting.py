@@ -165,12 +165,9 @@ def load_mb_config() -> dict:
 def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
     """
     Retorna {normalized_publisher_name → payout}.
-    Excluye llamadas duplicadas para coincidir con la UI de Ringba (Publisher Summary).
+    Usa el mismo método que true_profit.py (todos los call logs, sin filtros adicionales).
     """
-    summary = get_publisher_summary(
-        RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc,
-        exclude_duplicates=True,
-    )
+    summary = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
     return {k: v["payout"] for k, v in summary.items()}
 
 
