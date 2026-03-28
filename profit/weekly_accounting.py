@@ -88,9 +88,10 @@ TOTAL_COLS     = 18
 # ── Colores RGB (0.0 – 1.0) ───────────────────────────────────────────────────
 # Fallback: se intentan leer de las tablas existentes en el Sheet.
 # Si no hay tablas previas, se usa este azul medio oscuro estándar.
-C_HEADER_DATE = {"red": 0.122, "green": 0.286, "blue": 0.490}   # #1F497D — azul medio
-C_HEADER_COLS = {"red": 0.122, "green": 0.286, "blue": 0.490}   # #1F497D
-C_ROW_TOTAL   = {"red": 0.122, "green": 0.286, "blue": 0.490}   # #1F497D
+C_HEADER_DATE = {"red": 0.122, "green": 0.286, "blue": 0.490}   # #1F497D — fallback
+C_HEADER_COLS = {"red": 0.122, "green": 0.286, "blue": 0.490}   # #1F497D — fallback
+C_ROW_TOTAL   = {"red": 0.122, "green": 0.286, "blue": 0.490}   # #1F497D — fallback
+C_DATA_ROW    = {"red": 0.812, "green": 0.886, "blue": 0.953}   # #CFE2F3 — celeste 3 fallback
 C_WHITE       = {"red": 1.0,   "green": 1.0,   "blue": 1.0}
 C_BLACK       = {"red": 0.0,   "green": 0.0,   "blue": 0.0}
 C_GOLD        = {"red": 1.0,   "green": 0.843, "blue": 0.0}     # #FFD700
@@ -367,21 +368,25 @@ def _read_cell_bg_color(spreadsheet, sheet_title: str, row: int, col: int) -> di
 
 def read_existing_header_colors(spreadsheet, ws, name_row: int | None) -> tuple:
     """
-    Lee los colores de los encabezados de la tabla anterior.
+    Lee los colores de las filas de la tabla anterior.
     name_row: fila con "Name" (fila 2 de la última tabla).
-    Retorna (date_color, cols_color) — usa C_HEADER_DATE/COLS como fallback.
+    Retorna (date_color, cols_color, data_row_color).
+    Usa los colores constantes como fallback si no hay tabla previa.
     """
     if not name_row or name_row < 2:
-        return C_HEADER_DATE, C_HEADER_COLS
+        return C_HEADER_DATE, C_HEADER_COLS, C_DATA_ROW
 
-    date_color = _read_cell_bg_color(spreadsheet, ws.title, name_row - 1, 1)
-    cols_color = _read_cell_bg_color(spreadsheet, ws.title, name_row,     1)
+    date_color     = _read_cell_bg_color(spreadsheet, ws.title, name_row - 1, 1)
+    cols_color     = _read_cell_bg_color(spreadsheet, ws.title, name_row,     1)
+    data_row_color = _read_cell_bg_color(spreadsheet, ws.title, name_row + 1, 1)  # 1.ª fila de MB
 
-    date_color = date_color or C_HEADER_DATE
-    cols_color = cols_color or C_HEADER_COLS
+    date_color     = date_color     or C_HEADER_DATE
+    cols_color     = cols_color     or C_HEADER_COLS
+    data_row_color = data_row_color or C_DATA_ROW
 
-    print(f"  Colores leídos del Sheet → date: {date_color}  cols: {cols_color}")
-    return date_color, cols_color
+    print(f"  Colores leídos → date: {date_color}  "
+          f"cols: {cols_color}  data: {data_row_color}")
+    return date_color, cols_color, data_row_color
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -551,7 +556,13 @@ def apply_formatting(
     row_mb_e = start_row + 2 + mb_count - 1
     row_tot  = start_row + 2 + mb_count
 
-    h_date, h_cols = header_colors if header_colors else (C_HEADER_DATE, C_HEADER_COLS)
+    if header_colors and len(header_colors) == 3:
+        h_date, h_cols, h_data = header_colors
+    elif header_colors and len(header_colors) == 2:
+        h_date, h_cols = header_colors
+        h_data = C_DATA_ROW
+    else:
+        h_date, h_cols, h_data = C_HEADER_DATE, C_HEADER_COLS, C_DATA_ROW
     h_total = h_date   # la fila TOTAL usa el mismo color que la fila de fecha
 
     def fmt_req(r1, c1, r2, c2, bg=None, fg=None, bold=None, num_fmt=None):
@@ -597,9 +608,8 @@ def apply_formatting(
     reqs.append(fmt_req(row_cols, COL_ROYALPRIME, row_cols, COL_ROYALPRIME,
                         h_cols, C_GOLD, True))
 
-    # Filas de datos (MB): fondo blanco, texto negro, sin negrita
-    # No se toca el fondo → las celdas quedan del color del sheet (blanco)
-    reqs.append(fmt_req(row_mb_s, 1, row_mb_e, TOTAL_COLS, C_WHITE, C_BLACK, False))
+    # Filas de datos (MB): color celeste (igual al de las tablas anteriores), texto negro
+    reqs.append(fmt_req(row_mb_s, 1, row_mb_e, TOTAL_COLS, h_data, C_BLACK, False))
 
     # Fila TOTAL: mismo color que el encabezado de fecha, texto blanco, negrita
     reqs.append(fmt_req(row_tot, 1, row_tot, TOTAL_COLS, h_total, C_WHITE, True))
@@ -628,10 +638,40 @@ def apply_formatting(
         })
 
     # ── Bordes ────────────────────────────────────────────────────────────────
+    # Estructura: A–M = tabla principal  |  N–O = sin bordes  |  P–R = mini-tabla aparte
     border = {"style": "SOLID", "width": 1, "color": C_GRAY_BORDER}
+    no_border = {"style": "NONE"}
+
+    # 1. Tabla principal A–M (columnas 1–13)
     reqs.append({
         "updateBorders": {
-            "range":           grid_range(sheet_id, row_date, 1, row_tot, TOTAL_COLS),
+            "range":           grid_range(sheet_id, row_date, 1, row_tot, 13),
+            "top":             border,
+            "bottom":          border,
+            "left":            border,
+            "right":           border,
+            "innerHorizontal": border,
+            "innerVertical":   border,
+        }
+    })
+
+    # 2. Limpiar bordes en N–O (columnas 14–15) — notas manuales, sin tabla
+    reqs.append({
+        "updateBorders": {
+            "range":           grid_range(sheet_id, row_date, 14, row_tot, 15),
+            "top":             no_border,
+            "bottom":          no_border,
+            "left":            no_border,
+            "right":           no_border,
+            "innerHorizontal": no_border,
+            "innerVertical":   no_border,
+        }
+    })
+
+    # 3. Mini-tabla P–R (columnas 16–18) — Revenue Dif, Profit Dif, Indicator
+    reqs.append({
+        "updateBorders": {
+            "range":           grid_range(sheet_id, row_date, 16, row_tot, 18),
             "top":             border,
             "bottom":          border,
             "left":            border,
@@ -796,7 +836,7 @@ def write_monthly_table(
     end_col = col_letter(MONTH_COLS)
     end_row = start_row + len(all_rows) - 1
     rng     = f"A{start_row}:{end_col}{end_row}"
-    ws_2026.update(rng, all_rows, value_input_option="USER_ENTERED")
+    ws_2026.update(range_name=rng, values=all_rows, value_input_option="USER_ENTERED")
 
     # ── Formatear ──────────────────────────────────────────────────────────────
     sheet_id = ws_2026.id
@@ -969,7 +1009,7 @@ def main() -> None:
     n_rows  = len(table_values)
     end_col = col_letter(TOTAL_COLS)
     rng     = f"A{start_row}:{end_col}{start_row + n_rows - 1}"
-    ws.update(rng, table_values, value_input_option="USER_ENTERED")
+    ws.update(range_name=rng, values=table_values, value_input_option="USER_ENTERED")
     print(f"Valores escritos en {rng}")
 
     # Formatear (con los colores leídos del Sheet)
