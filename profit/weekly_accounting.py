@@ -943,12 +943,6 @@ def main() -> None:
     print("Consultando Ringba (weekly)...")
     payouts_weekly = fetch_ringba_payouts(start_utc, end_utc)
 
-    # Log detallado para verificar qué publishers devuelve la API
-    print("  Publishers con payout > 0:")
-    for key, val in sorted(payouts_weekly.items(), key=lambda x: -x[1]):
-        if val > 0:
-            print(f"    '{key}': ${val:.2f}")
-
     print("Consultando Meta (weekly)...")
     spends_weekly = fetch_meta_spends(since_str, until_str, mb_config)
 
@@ -997,8 +991,7 @@ def main() -> None:
         payout = payouts_weekly.get(pub_key, 0.0)
         spend  = spends_weekly.get(ad_id, 0.0)
 
-        print(f"  {mb['sheet_name']}: payout=${payout:.2f}  spend=${spend:.2f}"
-              f"  (pub_key='{pub_key}')")
+        print(f"  {mb['sheet_name']}: payout=${payout:.2f}  spend=${spend:.2f}")
 
         row = {
             "name":               mb["sheet_name"],
