@@ -137,6 +137,8 @@ def get_publisher_summary(
                 print(f"  [Ringba] Total registros en rango: {total_count}")
             except (ValueError, TypeError):
                 pass
+            if records:
+                print(f"  [Ringba DBG] Campos del primer record: {sorted(records[0].keys())}")
 
         if not records:
             break
