@@ -109,15 +109,20 @@ def get_publisher_summary(
     account_id: str,
     start_utc: datetime,
     end_utc: datetime,
+    exclude_duplicates: bool = False,
 ) -> dict[str, dict]:
     """
     Agrega call logs por publisher en el rango dado.
     Retorna dict: normalized_name → {raw, revenue, payout, calls, connected, conversions, profit_net}
 
-    Usado por: true_profit, mb_alerts, spend_guard, mb_daily_summary
+    exclude_duplicates=True: omite llamadas marcadas como duplicadas (isDuplicate=True).
+    Usar True para contabilidad semanal — la UI de Ringba Publisher Summary las excluye.
+
+    Usado por: true_profit, mb_alerts, spend_guard, mb_daily_summary, weekly_accounting
     """
     publisher_map: dict[str, dict] = {}
     offset = 0
+    skipped_dupes = 0
 
     for page in range(1, MAX_PAGES + 1):
         data    = _post_calllogs(token, account_id, start_utc, end_utc, PAGE_SIZE, offset)
@@ -126,7 +131,17 @@ def get_publisher_summary(
         if not records:
             break
 
+        # Log de campos disponibles en la primera llamada (ayuda a diagnosticar)
+        if page == 1 and records and exclude_duplicates:
+            first_keys = list(records[0].keys())
+            print(f"  [Ringba fields sample]: {first_keys[:25]}")
+
         for r in records:
+            # Excluir duplicados si se solicita (replica el comportamiento de la UI)
+            if exclude_duplicates and r.get("isDuplicate") is True:
+                skipped_dupes += 1
+                continue
+
             raw = str(r.get("publisherName") or "")
             key = normalize_name(raw) or "unknown"
 
@@ -154,6 +169,9 @@ def get_publisher_summary(
         offset += len(records)
         if len(records) < PAGE_SIZE:
             break
+
+    if exclude_duplicates:
+        print(f"  [Ringba] Llamadas duplicadas excluidas: {skipped_dupes}")
 
     return publisher_map
 
