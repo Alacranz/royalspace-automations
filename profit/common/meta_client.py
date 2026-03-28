@@ -37,6 +37,38 @@ def get_spend(
     return 0.0
 
 
+def get_spend_range(
+    access_token: str,
+    api_version: str,
+    account_id: str,
+    since: str,
+    until: str,
+) -> float:
+    """
+    Retorna el spend para un rango de fechas personalizado.
+    since / until en formato YYYY-MM-DD.
+    Equivalente a Get-MetaSpendYesterday pero con rango libre.
+    """
+    import json as _json
+    clean_id = account_id.replace("act_", "")
+    url = f"https://graph.facebook.com/{api_version}/act_{clean_id}/insights"
+    params = {
+        "fields":      "spend",
+        "time_range":  _json.dumps({"since": since, "until": until}),
+        "level":       "account",
+        "access_token": access_token,
+    }
+    resp = requests.get(url, params=params, timeout=30)
+    resp.raise_for_status()
+    data = resp.json().get("data") or []
+    if data:
+        try:
+            return float(data[0].get("spend") or 0)
+        except (ValueError, TypeError):
+            return 0.0
+    return 0.0
+
+
 def build_spend_map(
     access_token: str,
     api_version: str,

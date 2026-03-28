@@ -1,0 +1,48 @@
+name: Contabilidad — Calcular Semana
+
+# Activación MANUAL desde GitHub Actions → Run workflow.
+# Introduce las fechas de inicio y fin de la semana a calcular.
+# El cálculo automático NO está habilitado — lo activas tú cuando
+# Ringba tenga los datos finales con devoluciones y rechazos.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_inicio:
+        description: "Fecha inicio (DD/MM/YYYY) — ej: 02/03/2026"
+        required: true
+      date_fin:
+        description: "Fecha fin   (DD/MM/YYYY) — ej: 08/03/2026"
+        required: true
+
+jobs:
+  calcular:
+    name: Calcular semana ${{ github.event.inputs.date_inicio }} - ${{ github.event.inputs.date_fin }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: profit/requirements.txt
+
+      - name: Instalar dependencias
+        run: pip install -r profit/requirements.txt
+
+      - name: Ejecutar cálculo semanal
+        run: python profit/weekly_accounting.py
+        env:
+          DATE_INICIO:                 ${{ github.event.inputs.date_inicio }}
+          DATE_FIN:                    ${{ github.event.inputs.date_fin }}
+          RINGBA_API_TOKEN:            ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID:           ${{ secrets.RINGBA_ACCOUNT_ID }}
+          META_ACCESS_TOKEN:           ${{ secrets.META_ACCESS_TOKEN }}
+          META_API_VERSION:            ${{ vars.META_API_VERSION || 'v25.0' }}
+          DISCORD_WEBHOOK_MOD:         ${{ secrets.DISCORD_WEBHOOK_MOD }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SPREADSHEET_ID:              ${{ secrets.SPREADSHEET_ID }}

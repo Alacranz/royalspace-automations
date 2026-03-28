@@ -44,6 +44,28 @@ CLIENT_SECRET   = os.environ["JIBBLE_CLIENT_SECRET"]
 ORG_ID          = os.environ["JIBBLE_ORG_ID"]
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK_ASISTENCIA"]
 
+# Google Sheets (opcionales — si no están definidos, se omite SISTEMA_DATOS)
+GSHEETS_SA_JSON    = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+GSHEETS_SHEET_ID   = os.environ.get("SPREADSHEET_ID")
+
+# Mapeo Jibble preferredName → nombre corto en la hoja de contabilidad
+# (case-insensitive contains match)
+_JIBBLE_TO_ACCOUNTING = [
+    ("esteban",  "Esteban"),
+    ("douglas",  "Douglas"),
+    ("luis",     "Luis"),
+    ("kevin",    "Kevin"),
+    ("clara",    "Clara"),
+    ("edixon",   "Cordova"),
+    ("cordova",  "Cordova"),
+]
+
+# Orden fijo para SISTEMA_DATOS (debe coincidir con weekly_accounting.py)
+_SISTEMA_DATOS_ORDER = [
+    "Esteban", "Douglas", "Luis", "Kevin",
+    "Clara", "Cordova", "Sebastian", "Caribay",
+]
+
 ON_TIME_END = (9, 15)
 LATE_START  = (9, 16)
 LATE_END    = (11, 0)
@@ -306,6 +328,79 @@ def main() -> None:
 
     send_discord_with_file("[ASISTENCIA] Resumen mensual", msg, xlsx_bytes, filename)
     print("Mensaje + Excel enviados a Discord. OK")
+
+    # ── Escribir penalizaciones en SISTEMA_DATOS (Google Sheets) ──────────────
+    if GSHEETS_SA_JSON and GSHEETS_SHEET_ID:
+        try:
+            _write_sistema_datos(scores, year, month)
+        except Exception as exc:
+            print(f"Advertencia: no se pudo escribir SISTEMA_DATOS: {exc}")
+
+
+def _jibble_to_accounting(preferred_name: str) -> str | None:
+    """Mapea preferredName de Jibble al nombre corto de contabilidad."""
+    low = preferred_name.lower()
+    for keyword, accounting_name in _JIBBLE_TO_ACCOUNTING:
+        if keyword in low:
+            return accounting_name
+    return None
+
+
+def _write_sistema_datos(
+    scores: list[tuple[str, float]],
+    year: int,
+    month: int,
+) -> None:
+    """
+    Escribe o actualiza la hoja 'SISTEMA_DATOS' en el Google Sheet
+    con las penalizaciones de asistencia del mes procesado.
+
+    Formato:
+      Col A: Nombre (short name de contabilidad)
+      Col B: Penalización (negativo o 0)
+      Col C: Mes/año (ej: 03/2026)
+    """
+    import json as _json
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    SCOPES = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+
+    sa_info = _json.loads(GSHEETS_SA_JSON)
+    creds   = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
+    gc      = gspread.authorize(creds)
+    ss      = gc.open_by_key(GSHEETS_SHEET_ID)
+
+    # Obtener o crear hoja SISTEMA_DATOS
+    try:
+        ws = ss.worksheet("SISTEMA_DATOS")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = ss.add_worksheet("SISTEMA_DATOS", rows=20, cols=5)
+        print("Hoja SISTEMA_DATOS creada.")
+
+    # Construir mapa {accounting_name → penalty}
+    penalty_map: dict[str, float] = {name: 0.0 for name in _SISTEMA_DATOS_ORDER}
+    for jibble_name, total in scores:
+        acc_name = _jibble_to_accounting(jibble_name)
+        if acc_name and acc_name in penalty_map:
+            penalty_map[acc_name] = round(total, 2)
+
+    mes_label = f"{month:02d}/{year}"
+
+    # Escribir: fila de header + 8 filas de MB
+    header = [["Nombre", "Penalización", "Mes"]]
+    rows   = [
+        [name, penalty_map.get(name, 0.0), mes_label]
+        for name in _SISTEMA_DATOS_ORDER
+    ]
+    all_rows = header + rows
+
+    ws.clear()
+    ws.update("A1", all_rows, value_input_option="USER_ENTERED")
+    print(f"SISTEMA_DATOS actualizado: {mes_label} — {penalty_map}")
 
 
 if __name__ == "__main__":

@@ -31,10 +31,12 @@ jobs:
       - name: Ejecutar reporte mensual
         run: python asistencia/monthly_report.py
         env:
-          JIBBLE_CLIENT_ID:           ${{ secrets.JIBBLE_CLIENT_ID }}
-          JIBBLE_CLIENT_SECRET:       ${{ secrets.JIBBLE_CLIENT_SECRET }}
-          JIBBLE_ORG_ID:              ${{ secrets.JIBBLE_ORG_ID }}
-          DISCORD_WEBHOOK_ASISTENCIA: ${{ secrets.DISCORD_WEBHOOK_ASISTENCIA }}
+          JIBBLE_CLIENT_ID:            ${{ secrets.JIBBLE_CLIENT_ID }}
+          JIBBLE_CLIENT_SECRET:        ${{ secrets.JIBBLE_CLIENT_SECRET }}
+          JIBBLE_ORG_ID:               ${{ secrets.JIBBLE_ORG_ID }}
+          DISCORD_WEBHOOK_ASISTENCIA:  ${{ secrets.DISCORD_WEBHOOK_ASISTENCIA }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SPREADSHEET_ID:              ${{ secrets.SPREADSHEET_ID }}
 
       - name: Subir Excel como artifact
         uses: actions/upload-artifact@v4
