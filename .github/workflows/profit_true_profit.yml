@@ -1,6 +1,6 @@
 name: Profit — True Profit + MB Alerts
 
-# Corre cada 30 minutos. El script verifica horario laboral internamente:
+# Corre cada hora. El script verifica horario laboral internamente:
 #   Lunes-Viernes 08:00-20:00 EST | Sábado 08:00-14:00 EST | Domingo: nunca
 # EST = UTC-5 (EDT = UTC-4 en verano). El script usa America/New_York (pytz).
 #
@@ -11,7 +11,7 @@ name: Profit — True Profit + MB Alerts
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
       force_run:
