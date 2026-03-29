@@ -8,6 +8,7 @@ venv/
 
 # Estado en tiempo de ejecución (generado por GitHub Actions)
 profit/state/
+profit/alerts_state/
 asistencia/Asistencia_*.xlsx
 
 # Archivos de Windows / macOS

@@ -69,6 +69,58 @@ def get_spend_range(
     return 0.0
 
 
+def get_adset_insights(
+    access_token: str,
+    api_version: str,
+    account_id: str,
+    date_preset: str = "today",
+) -> list[dict]:
+    """
+    Retorna métricas por anuncio (nivel 'ad') para detectar CPR alto.
+
+    Campos por registro:
+      adset_id, adset_name, ad_id, ad_name,
+      spend, cost_per_result, objective, optimization_goal
+
+    Pagina automáticamente hasta obtener todos los resultados del día.
+    Usado por: alerts.py
+    """
+    clean_id = account_id.replace("act_", "")
+    url = f"https://graph.facebook.com/{api_version}/act_{clean_id}/insights"
+
+    fields = ",".join([
+        "adset_id", "adset_name", "ad_id", "ad_name",
+        "spend", "cost_per_result", "objective", "optimization_goal",
+    ])
+
+    params = {
+        "fields":       fields,
+        "date_preset":  date_preset,
+        "level":        "ad",
+        "limit":        500,
+        "access_token": access_token,
+    }
+
+    results = []
+
+    while url:
+        resp = requests.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+
+        results.extend(data.get("data") or [])
+
+        paging   = data.get("paging") or {}
+        next_url = paging.get("next")
+        if next_url:
+            url    = next_url
+            params = {}   # la URL ya lleva los parámetros embebidos
+        else:
+            break
+
+    return results
+
+
 def build_spend_map(
     access_token: str,
     api_version: str,

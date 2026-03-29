@@ -1,0 +1,62 @@
+name: Profit — Alertas Inteligentes
+
+# Corre cada hora. El script verifica horario internamente:
+#   Meta Ads : no alerta antes de las 10:00 AM VET (UTC-4)
+#   Ringba   : no alerta entre 12am y 6am VET (UTC-4)
+#
+# Envía alertas individuales a Discord:
+#   MBs internos  → DISCORD_WEBHOOK_MB_INTERNAL
+#   MBs externos  → DISCORD_WEBHOOK_MB_EXTERNAL
+#   Ringba / RS   → DISCORD_WEBHOOK_MOD
+#
+# El estado anti-spam se persiste entre runs via GitHub Actions cache.
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # cada hora en punto
+  workflow_dispatch:
+
+jobs:
+  alerts:
+    name: Meta + Ringba Alerts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restaurar estado de alertas (anti-spam)
+        uses: actions/cache/restore@v4
+        with:
+          path: profit/alerts_state/
+          key: alerts-state-${{ github.run_id }}
+          restore-keys: |
+            alerts-state-
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: profit/requirements.txt
+
+      - name: Instalar dependencias
+        run: pip install -r profit/requirements.txt
+
+      - name: Ejecutar alertas
+        run: python profit/alerts.py
+        env:
+          RINGBA_API_TOKEN:            ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID:           ${{ secrets.RINGBA_ACCOUNT_ID }}
+          META_ACCESS_TOKEN:           ${{ secrets.META_ACCESS_TOKEN }}
+          META_API_VERSION:            ${{ vars.META_API_VERSION || 'v25.0' }}
+          DISCORD_WEBHOOK_MOD:         ${{ secrets.DISCORD_WEBHOOK_MOD }}
+          DISCORD_WEBHOOK_MB_INTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_INTERNAL }}
+          DISCORD_WEBHOOK_MB_EXTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_EXTERNAL }}
+
+      - name: Guardar estado de alertas
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: profit/alerts_state/
+          key: alerts-state-${{ github.run_id }}
