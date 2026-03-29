@@ -320,15 +320,19 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
             print(f"    → DECISIÓN: {decision}")
 
             if decision in ("ALERT", "REPEAT", "WORSENED"):
-                msg = (
-                    f"⚠️ **META ADS ALERTA**\n"
-                    f"👤 MB: {mb_name}\n"
-                    f"🎯 Ad Set: {adset_name}\n"
-                    f"📢 Anuncio: {ad_name}\n"
-                    f"💰 CPR actual: ${cpr:.2f} (límite: ${threshold:.2f})\n"
-                    f"📊 Gasto hoy: ${spend:.2f}\n"
-                    f"🔴 Acción sugerida: Revisar budget o pausar"
-                )
+                msg = "\n".join([
+                    "```",
+                    "⚠ META ADS ALERTA",
+                    "",
+                    f"MB      : {mb_name}",
+                    f"Ad Set  : {adset_name}",
+                    f"Anuncio : {ad_name}",
+                    f"CPR     : ${cpr:.2f}  (límite ${threshold:.2f})",
+                    f"Gasto   : ${spend:.2f}",
+                    "",
+                    "Accion  : Revisar budget o pausar",
+                    "```",
+                ])
                 try:
                     discord_send(hook, msg)
                     print(f"  → Alerta enviada")
@@ -337,10 +341,13 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
                 mark_alert(s, cpr)
 
             elif decision == "RECOVERY":
-                msg = (
-                    f"✅ **RECUPERADO**: {mb_name} — {adset_name}\n"
-                    f"CPR volvió a rango normal: ${cpr:.2f} (límite: ${threshold:.2f})"
-                )
+                msg = "\n".join([
+                    "```",
+                    f"RECUPERADO — {mb_name}",
+                    f"Ad Set : {adset_name}",
+                    f"CPR    : ${cpr:.2f}  (límite ${threshold:.2f})  — volvio a rango normal",
+                    "```",
+                ])
                 try:
                     discord_send(hook, msg)
                     print(f"  → Recuperación enviada")
@@ -421,24 +428,20 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
         has_recovery = (conn_dec == "RECOVERY") or (conv_dec == "RECOVERY")
 
         if has_alert:
-            conn_line = (
-                f"📉 Connection Rate: {conn_rate:.1f}% (mínimo: {CONN_RATE_MIN:.0f}%)"
-                if conn_dec in ("ALERT", "REPEAT", "WORSENED") else
-                f"✅ Connection Rate: {conn_rate:.1f}%"
-            )
-            conv_line = (
-                f"📉 Conversion Rate: {conv_rate:.1f}% (mínimo: {CONV_RATE_MIN:.0f}%)"
-                if conv_dec in ("ALERT", "REPEAT", "WORSENED") else
-                f"✅ Conversion Rate: {conv_rate:.1f}%"
-            )
-            msg = (
-                f"⚠️ **RINGBA ALERTA**\n"
-                f"👤 Publisher: {mb_name}\n"
-                f"📞 Incoming: {incoming} | Connected: {connected} | Converted: {converted}\n"
-                f"{conn_line}\n"
-                f"{conv_line}\n"
-                f"🔴 Acción sugerida: Revisar grabaciones de llamadas"
-            )
+            conn_flag = "!" if conn_dec in ("ALERT", "REPEAT", "WORSENED") else " "
+            conv_flag = "!" if conv_dec in ("ALERT", "REPEAT", "WORSENED") else " "
+            msg = "\n".join([
+                "```",
+                "⚠ RINGBA ALERTA",
+                "",
+                f"Publisher   : {mb_name}",
+                f"Llamadas    : Incoming {incoming}  Connected {connected}  Converted {converted}",
+                f"Conn Rate  {conn_flag}: {conn_rate:.1f}%  (minimo {CONN_RATE_MIN:.0f}%)",
+                f"Conv Rate  {conv_flag}: {conv_rate:.1f}%  (minimo {CONV_RATE_MIN:.0f}%)",
+                "",
+                "Accion      : Revisar grabaciones de llamadas",
+                "```",
+            ])
             try:
                 discord_send(WEBHOOK_MOD, msg)
                 print(f"  → Alerta Ringba enviada a #mod")
@@ -453,15 +456,17 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
         if has_recovery:
             parts = []
             if conn_dec == "RECOVERY":
-                parts.append(f"Connection Rate: {conn_rate:.1f}%")
+                parts.append(f"Conn Rate: {conn_rate:.1f}%")
                 mark_recovery(s_conn)
             if conv_dec == "RECOVERY":
-                parts.append(f"Conversion Rate: {conv_rate:.1f}%")
+                parts.append(f"Conv Rate: {conv_rate:.1f}%")
                 mark_recovery(s_conv)
-            msg = (
-                f"✅ **RECUPERADO**: {mb_name} — {', '.join(parts)} "
-                f"volvió a rango normal"
-            )
+            msg = "\n".join([
+                "```",
+                f"RECUPERADO — {mb_name}",
+                f"{' | '.join(parts)}  — volvio a rango normal",
+                "```",
+            ])
             try:
                 discord_send(WEBHOOK_MOD, msg)
                 print(f"  → Recuperación Ringba enviada a #mod")
