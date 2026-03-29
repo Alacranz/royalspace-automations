@@ -1,7 +1,7 @@
 name: Profit — MB Daily Summary
 
-# Corre cada mañana de lunes a sábado a las 8:00 AM EST (13:00 UTC).
-# El sábado muestra el resumen del viernes anterior.
+# Corre cada mañana de lunes a domingo a las 8:00 AM EST (13:00 UTC).
+# El domingo muestra el resumen del sábado anterior.
 # Muestra el resumen COMPLETO del día anterior con fecha.
 # No tiene verificación de horario laboral — corre incondicionalmente.
 #
@@ -11,7 +11,7 @@ name: Profit — MB Daily Summary
 
 on:
   schedule:
-    - cron: "0 13 * * 1-6"   # 8:00 AM EST (UTC-5) · lunes a sábado
+    - cron: "0 13 * * *"      # 8:00 AM EST (UTC-5) · lunes a domingo
   workflow_dispatch:
 
 jobs:
