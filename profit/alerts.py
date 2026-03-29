@@ -43,8 +43,8 @@ RINGBA_ACCOUNT   = os.environ["RINGBA_ACCOUNT_ID"]
 META_TOKEN       = os.environ["META_ACCESS_TOKEN"]
 META_VERSION     = os.environ.get("META_API_VERSION", "v25.0")
 WEBHOOK_MOD      = os.environ["DISCORD_WEBHOOK_MOD"]
-WEBHOOK_INTERNAL = os.environ["DISCORD_WEBHOOK_MB_INTERNAL"]
-WEBHOOK_EXTERNAL = os.environ["DISCORD_WEBHOOK_MB_EXTERNAL"]
+WEBHOOK_INTERNAL = os.environ["DISCORD_WEBHOOK_ALERTS_INTERNAL"]
+WEBHOOK_EXTERNAL = os.environ["DISCORD_WEBHOOK_ALERTS_EXTERNAL"]
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
 CONFIG_PATH = Path(__file__).parent / "config.json"

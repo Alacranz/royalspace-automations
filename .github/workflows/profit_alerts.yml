@@ -5,9 +5,9 @@ name: Profit — Alertas Inteligentes
 #   Ringba   : no alerta entre 12am y 6am VET (UTC-4)
 #
 # Envía alertas individuales a Discord:
-#   MBs internos  → DISCORD_WEBHOOK_MB_INTERNAL
-#   MBs externos  → DISCORD_WEBHOOK_MB_EXTERNAL
-#   Ringba / RS   → DISCORD_WEBHOOK_MOD
+#   MBs internos  → DISCORD_WEBHOOK_ALERTS_INTERNAL  (#mb-alerts internos)
+#   MBs externos  → DISCORD_WEBHOOK_ALERTS_EXTERNAL  (#mb-alerts externos)
+#   Ringba / RS   → DISCORD_WEBHOOK_MOD              (#mod)
 #
 # El estado anti-spam se persiste entre runs via GitHub Actions cache.
 
@@ -50,9 +50,9 @@ jobs:
           RINGBA_ACCOUNT_ID:           ${{ secrets.RINGBA_ACCOUNT_ID }}
           META_ACCESS_TOKEN:           ${{ secrets.META_ACCESS_TOKEN }}
           META_API_VERSION:            ${{ vars.META_API_VERSION || 'v25.0' }}
-          DISCORD_WEBHOOK_MOD:         ${{ secrets.DISCORD_WEBHOOK_MOD }}
-          DISCORD_WEBHOOK_MB_INTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_INTERNAL }}
-          DISCORD_WEBHOOK_MB_EXTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_EXTERNAL }}
+          DISCORD_WEBHOOK_MOD:              ${{ secrets.DISCORD_WEBHOOK_MOD }}
+          DISCORD_WEBHOOK_ALERTS_INTERNAL:  ${{ secrets.DISCORD_WEBHOOK_ALERTS_INTERNAL }}
+          DISCORD_WEBHOOK_ALERTS_EXTERNAL:  ${{ secrets.DISCORD_WEBHOOK_ALERTS_EXTERNAL }}
 
       - name: Guardar estado de alertas
         if: always()
