@@ -55,9 +55,11 @@ CPR_MESSAGES = 0.90    # Objetivo Mensajes
 CPR_WEBSITE  = 10.00   # Objetivo Sitio Web / Landing
 MIN_SPEND    = 5.00    # Gasto mínimo para alertar (evita falsos positivos)
 
-# Objetivos Meta que se clasifican como "Mensajes"
-META_MSG_OBJECTIVES = {"MESSAGES", "OUTCOME_ENGAGEMENT"}
-META_MSG_GOALS      = {"CONVERSATIONS", "REPLIES", "MESSAGING_APPOINTMENT_CONVERSION"}
+# Clasificación de tipo de campaña según optimization_goal
+# MENSAJES: conversaciones de WhatsApp / Messenger
+META_MSG_GOALS     = {"CONVERSATIONS", "REPLIES", "MESSAGING_APPOINTMENT_CONVERSION"}
+# SITIO WEB / LANDING: pixel, conversiones externas, clics
+META_WEBSITE_GOALS = {"OFFSITE_CONVERSIONS", "LINK_CLICKS", "LANDING_PAGE_VIEWS", "VALUE"}
 
 # ── Umbrales Ringba ───────────────────────────────────────────────────────────
 CONN_RATE_MIN = 20.0   # Connection Rate mínimo (%)
@@ -175,18 +177,37 @@ def webhook_for(mb: dict) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def cpr_threshold(objective: str, optimization_goal: str) -> float:
-    """Determina el umbral CPR según el tipo de campaña."""
-    obj  = (objective        or "").upper()
+    """
+    Determina el umbral CPR según el tipo de campaña.
+
+    Prioridad:
+      1. Si optimization_goal es explícitamente de sitio web → $10.00
+      2. Si optimization_goal es de mensajes                 → $0.90
+      3. Default conservador                                 → $10.00
+
+    Nota: OUTCOME_ENGAGEMENT cubre tanto mensajes como engagement de posts,
+    por eso NO se usa el objective solo — se usa el goal como discriminador.
+    """
     goal = (optimization_goal or "").upper()
-    if obj in META_MSG_OBJECTIVES or goal in META_MSG_GOALS:
+    if goal in META_WEBSITE_GOALS:
+        return CPR_WEBSITE
+    if goal in META_MSG_GOALS:
         return CPR_MESSAGES
-    return CPR_WEBSITE
+    return CPR_WEBSITE   # desconocido → umbral más conservador
 
 
 def parse_cpr(raw) -> float:
     """
     Parsea el campo cost_per_result de Meta API.
-    Puede llegar como str, float, list[dict] o None.
+
+    Formatos observados en producción:
+      - str / float : valor directo, e.g. "0.85"
+      - list[dict]  : formato nuevo con 'values' anidado:
+          [{"indicator": "actions:...", "values": [{"value": "1.003", ...}]}]
+      - list[dict]  : formato antiguo con 'value' directo:
+          [{"action_type": "...", "value": "0.85"}]
+      - list[dict]  : sin values (sin resultados todavía):
+          [{"indicator": "actions:..."}]   → retorna 0.0
     """
     if raw is None:
         return 0.0
@@ -200,6 +221,14 @@ def parse_cpr(raw) -> float:
     if isinstance(raw, list) and raw:
         item = raw[0]
         if isinstance(item, dict):
+            # Formato nuevo: values[0].value
+            values = item.get("values")
+            if isinstance(values, list) and values:
+                try:
+                    return float(values[0].get("value", 0))
+                except (ValueError, TypeError):
+                    return 0.0
+            # Formato antiguo: value directo
             try:
                 return float(item.get("value", 0))
             except (ValueError, TypeError):
