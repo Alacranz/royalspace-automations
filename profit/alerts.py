@@ -248,32 +248,47 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
             print(f"  ERROR: {e}")
             continue
 
-        # Log informativo: objetivos encontrados (útil para calibrar umbrales)
-        objectives_seen = {a.get("objective", "?") for a in ads}
-        goals_seen      = {a.get("optimization_goal", "?") for a in ads}
-        print(f"  Objetivos encontrados: {objectives_seen} | Goals: {goals_seen}")
+        print(f"  {len(ads)} anuncios encontrados (con gasto > $0)")
 
         for ad in ads:
             spend = float(ad.get("spend") or 0)
+
+            adset_id   = ad.get("adset_id",          "")
+            adset_name = ad.get("adset_name",         "?")
+            ad_name    = ad.get("ad_name",            "?")
+            objective  = ad.get("objective",          "")
+            opt_goal   = ad.get("optimization_goal",  "")
+            cpr_raw    = ad.get("cost_per_result")
+            cpr        = parse_cpr(cpr_raw)
+            threshold  = cpr_threshold(objective, opt_goal)
+            tipo       = "MENSAJES" if threshold == CPR_MESSAGES else "SITIO WEB"
+
+            # ── LOG DETALLADO (calibración de umbrales) ──────────────────────
+            print(
+                f"  AD SET : {adset_name}\n"
+                f"    Anuncio       : {ad_name}\n"
+                f"    objective     : {objective!r}\n"
+                f"    optim. goal   : {opt_goal!r}\n"
+                f"    → Tipo det.   : {tipo}\n"
+                f"    → Umbral CPR  : ${threshold:.2f}\n"
+                f"    CPR actual    : ${cpr:.2f}  (raw={cpr_raw!r})\n"
+                f"    Gasto hoy     : ${spend:.2f}"
+            )
+            # ─────────────────────────────────────────────────────────────────
+
             if spend < MIN_SPEND:
+                print(f"    → SKIP (gasto < ${MIN_SPEND:.2f})")
                 continue
 
-            adset_id   = ad.get("adset_id", "")
-            adset_name = ad.get("adset_name", "?")
-            ad_name    = ad.get("ad_name",    "?")
-            objective  = ad.get("objective",         "")
-            opt_goal   = ad.get("optimization_goal", "")
-            cpr        = parse_cpr(ad.get("cost_per_result"))
-            threshold  = cpr_threshold(objective, opt_goal)
-
             if cpr <= 0:
-                continue   # sin resultados todavía
+                print(f"    → SKIP (sin resultados todavía)")
+                continue
 
             entity_key = f"{ad_id}|{adset_id}"
             s          = meta_state.setdefault(entity_key, {})
             decision   = check_alert_needed(s, cpr, threshold, worse_is_higher=True)
 
-            print(f"  [{adset_name}] CPR=${cpr:.2f} umbral=${threshold:.2f} gasto=${spend:.2f} → {decision}")
+            print(f"    → DECISIÓN: {decision}")
 
             if decision in ("ALERT", "REPEAT", "WORSENED"):
                 msg = (
