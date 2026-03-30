@@ -70,7 +70,7 @@ def get_buyer_revenue(
     pagination instability (Ringba doesn't guarantee stable ordering across pages).
     Billing calllogs cover ALL buyers → more records/day than the profit system.
     """
-    CHUNK_HOURS = 12
+    CHUNK_HOURS = 6
 
     buyer_map: dict[str, dict] = {}
     total_fetched = 0
