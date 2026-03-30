@@ -117,7 +117,9 @@ def get_buyer_revenue(
             if verbose and day_num == 1 and _page == 1 and records:
                 first = records[0]
                 buyer_fields = {k: v for k, v in first.items() if "buyer" in k.lower() or "target" in k.lower()}
-                print(f"  [Ringba Buyer Debug] Sample buyer-related fields: {buyer_fields}")
+                amount_fields = {k: v for k, v in first.items() if any(x in k.lower() for x in ["amount", "revenue", "payout", "profit", "price", "rate", "cost", "value", "pay"])}
+                print(f"  [Ringba Buyer Debug] Buyer fields: {buyer_fields}")
+                print(f"  [Ringba Buyer Debug] Amount fields: {amount_fields}")
 
             for r in records:
                 raw = str(r.get("buyer") or r.get("buyerName") or "")
