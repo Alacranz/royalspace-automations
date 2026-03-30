@@ -96,17 +96,42 @@ def create_invoice(
 
 def send_invoice(token: str, org_id: str, invoice_id: str) -> None:
     """
-    Send an invoice via email using the contact's emails stored in Zoho.
-    Zoho uses the To/CC emails already configured in the customer profile.
+    Send an invoice via email.
+    First fetches Zoho's pre-populated email template (which contains the
+    contact's to/cc addresses), then sends using those addresses.
     """
-    url = f"{ZOHO_BOOKS_URL}/invoices/{invoice_id}/email"
     params = {"organization_id": org_id}
-    body = {"send_from_org_email_id": True}
-    resp = requests.post(url, headers=_headers(token), params=params, json=body, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    if data.get("code") != 0:
-        raise RuntimeError(f"Zoho send invoice error: {data}")
+
+    # Step 1: GET the email template — Zoho pre-fills to/cc from the contact profile
+    get_url = f"{ZOHO_BOOKS_URL}/invoices/{invoice_id}/email"
+    get_resp = requests.get(get_url, headers=_headers(token), params=params, timeout=30)
+    get_resp.raise_for_status()
+    email_data = get_resp.json()
+    if email_data.get("code") != 0:
+        raise RuntimeError(f"Zoho get email template error: {email_data}")
+
+    template = email_data.get("data", {})
+    to_mail_ids  = template.get("to_mail_ids", [])
+    cc_mail_ids  = template.get("cc_mail_ids", [])
+    subject      = template.get("subject", "")
+    body_content = template.get("body", "")
+
+    print(f"  [Zoho] Sending to: {to_mail_ids}")
+
+    # Step 2: POST to send using the pre-filled addresses
+    post_url = f"{ZOHO_BOOKS_URL}/invoices/{invoice_id}/email"
+    send_body = {
+        "to_mail_ids":   to_mail_ids,
+        "cc_mail_ids":   cc_mail_ids,
+        "subject":       subject,
+        "body":          body_content,
+        "send_attachment": True,
+    }
+    post_resp = requests.post(post_url, headers=_headers(token), params=params, json=send_body, timeout=30)
+    post_resp.raise_for_status()
+    post_data = post_resp.json()
+    if post_data.get("code") != 0:
+        raise RuntimeError(f"Zoho send invoice error: {post_data}")
     print(f"  [Zoho] Invoice {invoice_id} sent successfully")
 
 
