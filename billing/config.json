@@ -1,6 +1,6 @@
 {
   "zoho_org_id": "771911284",
-  "timezone": "America/New_York",
+  "timezone": "America/Caracas",
   "invoice_due_days": 30,
 
   "auto_invoice_buyers": [
