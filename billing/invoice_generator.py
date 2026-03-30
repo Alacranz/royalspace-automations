@@ -40,6 +40,12 @@ from billing.payment_tracker import log_invoice  # noqa: E402
 
 EST = pytz.timezone("America/New_York")
 
+MONTHS_EN = {
+    1: "January", 2: "February", 3: "March", 4: "April",
+    5: "May", 6: "June", 7: "July", 8: "August",
+    9: "September", 10: "October", 11: "November", 12: "December",
+}
+
 MONTHS_ES = {
     1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
     5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
@@ -83,8 +89,9 @@ def run() -> None:
 
     # ── Date range: previous month ─────────────────────────────────────────────
     today = datetime.now(pytz.timezone(tz_name)).date()
-    year, month = prev_month(today)
-    month_label  = f"{MONTHS_ES[month]} {year}"
+    year, month  = prev_month(today)
+    month_label  = f"{MONTHS_ES[month]} {year}"    # Discord/Sheets (español)
+    month_label_en = f"{MONTHS_EN[month]} {year}"  # Zoho invoices (inglés)
     invoice_date = today.strftime("%Y-%m-%d")
     due_dt       = today + timedelta(days=due_days)
     due_date_str = due_dt.strftime("%Y-%m-%d")
@@ -141,7 +148,7 @@ def run() -> None:
             # Build line item
             line_items = [{
                 "name":        item_name,
-                "description": f"Dental calls — {month_label}",
+                "description": f"Dental calls — {month_label_en}",
                 "quantity":    1,
                 "rate":        round(revenue, 2),
             }]
@@ -154,7 +161,7 @@ def run() -> None:
                 invoice_date=invoice_date,
                 due_date=due_date_str,
                 line_items=line_items,
-                reference_number=f"Ringba {month_label}",
+                reference_number=f"Ringba {month_label_en}",
             )
             invoice_number = invoice.get("invoice_number", "INV-??????")
             invoice_id     = invoice.get("invoice_id", "")
