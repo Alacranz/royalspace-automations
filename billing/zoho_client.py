@@ -35,8 +35,8 @@ def _headers(token: str) -> dict:
 
 # ── Contacts ──────────────────────────────────────────────────────────────────
 
-def get_contact_id(token: str, org_id: str, contact_name: str) -> str:
-    """Find a contact by name and return their contact_id."""
+def get_contact(token: str, org_id: str, contact_name: str) -> dict:
+    """Find a contact by name and return the full contact object."""
     url = f"{ZOHO_BOOKS_URL}/contacts"
     params = {"organization_id": org_id, "contact_name": contact_name}
     resp = requests.get(url, headers=_headers(token), params=params, timeout=30)
@@ -44,7 +44,34 @@ def get_contact_id(token: str, org_id: str, contact_name: str) -> str:
     contacts = resp.json().get("contacts", [])
     if not contacts:
         raise ValueError(f"Contact '{contact_name}' not found in Zoho Books")
-    return contacts[0]["contact_id"]
+    return contacts[0]
+
+
+def get_contact_id(token: str, org_id: str, contact_name: str) -> str:
+    """Find a contact by name and return their contact_id."""
+    return get_contact(token, org_id, contact_name)["contact_id"]
+
+
+def get_contact_emails(token: str, org_id: str, contact_id: str) -> list[str]:
+    """
+    Returns all email addresses for a contact (primary + contact persons).
+    """
+    url = f"{ZOHO_BOOKS_URL}/contacts/{contact_id}"
+    params = {"organization_id": org_id}
+    resp = requests.get(url, headers=_headers(token), params=params, timeout=30)
+    resp.raise_for_status()
+    contact = resp.json().get("contact", {})
+
+    emails = []
+    # Primary email
+    if contact.get("email"):
+        emails.append(contact["email"])
+    # Contact persons (billing contacts)
+    for person in contact.get("contact_persons", []):
+        email = person.get("email", "")
+        if email and email not in emails:
+            emails.append(email)
+    return emails
 
 
 # ── Items ─────────────────────────────────────────────────────────────────────
@@ -94,40 +121,39 @@ def create_invoice(
     return data["invoice"]
 
 
-def send_invoice(token: str, org_id: str, invoice_id: str) -> None:
+def send_invoice(token: str, org_id: str, invoice_id: str, to_emails: list[str]) -> None:
     """
-    Send an invoice via email.
-    First fetches Zoho's pre-populated email template (which contains the
-    contact's to/cc addresses), then sends using those addresses.
+    Send an invoice via email to the given addresses.
+    Fetches the email template for subject/body, then sends using the
+    contact's email addresses (passed in directly to avoid draft-status issues).
     """
     params = {"organization_id": org_id}
 
-    # Step 1: GET the email template — Zoho pre-fills to/cc from the contact profile
-    get_url = f"{ZOHO_BOOKS_URL}/invoices/{invoice_id}/email"
-    get_resp = requests.get(get_url, headers=_headers(token), params=params, timeout=30)
+    # GET template for subject/body (may have empty to_mail_ids on draft invoices)
+    get_resp = requests.get(
+        f"{ZOHO_BOOKS_URL}/invoices/{invoice_id}/email",
+        headers=_headers(token), params=params, timeout=30
+    )
     get_resp.raise_for_status()
-    email_data = get_resp.json()
-    if email_data.get("code") != 0:
-        raise RuntimeError(f"Zoho get email template error: {email_data}")
+    template = get_resp.json().get("data", {})
+    subject      = template.get("subject", "Invoice from Royalspace")
+    body_content = template.get("body", "Please find the attached invoice.")
 
-    template = email_data.get("data", {})
-    to_mail_ids  = template.get("to_mail_ids", [])
-    cc_mail_ids  = template.get("cc_mail_ids", [])
-    subject      = template.get("subject", "")
-    body_content = template.get("body", "")
+    if not to_emails:
+        raise ValueError(f"No email addresses found for invoice {invoice_id}")
 
-    print(f"  [Zoho] Sending to: {to_mail_ids}")
+    print(f"  [Zoho] Sending to: {to_emails}")
 
-    # Step 2: POST to send using the pre-filled addresses
-    post_url = f"{ZOHO_BOOKS_URL}/invoices/{invoice_id}/email"
     send_body = {
-        "to_mail_ids":   to_mail_ids,
-        "cc_mail_ids":   cc_mail_ids,
-        "subject":       subject,
-        "body":          body_content,
+        "to_mail_ids":     to_emails,
+        "subject":         subject,
+        "body":            body_content,
         "send_attachment": True,
     }
-    post_resp = requests.post(post_url, headers=_headers(token), params=params, json=send_body, timeout=30)
+    post_resp = requests.post(
+        f"{ZOHO_BOOKS_URL}/invoices/{invoice_id}/email",
+        headers=_headers(token), params=params, json=send_body, timeout=30
+    )
     post_resp.raise_for_status()
     post_data = post_resp.json()
     if post_data.get("code") != 0:

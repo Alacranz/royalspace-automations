@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.join(_ROOT, "profit"))      # for common.* imports
 
 from common.discord_client import send as discord_send  # noqa: E402
 from billing.zoho_client import (                        # noqa: E402
-    get_access_token, get_contact_id, create_invoice, send_invoice
+    get_access_token, get_contact_id, get_contact_emails, create_invoice, send_invoice
 )
 from billing.ringba_buyer import get_buyer_revenue, get_month_utc_range, find_buyer_data  # noqa: E402
 from billing.payment_tracker import log_invoice  # noqa: E402
@@ -141,9 +141,10 @@ def run() -> None:
         print(f"  Revenue: ${revenue:,.2f} | Calls: {calls} | Conversions: {conversions}")
 
         try:
-            # Get Zoho contact ID
+            # Get Zoho contact ID and email addresses
             contact_id = get_contact_id(zoho_token, org_id, zoho_name)
-            print(f"  [Zoho] Contact ID: {contact_id}")
+            contact_emails = get_contact_emails(zoho_token, org_id, contact_id)
+            print(f"  [Zoho] Contact ID: {contact_id} | Emails: {contact_emails}")
 
             # Build line item
             line_items = [{
@@ -171,7 +172,7 @@ def run() -> None:
             if dry_run:
                 print(f"  [DRY RUN] Skipping email send for {invoice_number}")
             else:
-                send_invoice(zoho_token, org_id, invoice_id)
+                send_invoice(zoho_token, org_id, invoice_id, contact_emails)
 
             # Log to Google Sheets
             log_invoice(
