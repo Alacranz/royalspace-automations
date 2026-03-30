@@ -161,7 +161,7 @@ def run() -> None:
                 invoice_date=invoice_date,
                 due_date=due_date_str,
                 line_items=line_items,
-                reference_number=f"Ringba {month_label_en}",
+                reference_number=f"Royalspace — {month_label_en}",
             )
             invoice_number = invoice.get("invoice_number", "INV-??????")
             invoice_id     = invoice.get("invoice_id", "")
