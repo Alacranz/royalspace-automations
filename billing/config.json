@@ -1,0 +1,60 @@
+{
+  "zoho_org_id": "771911284",
+  "timezone": "America/New_York",
+  "invoice_due_days": 30,
+
+  "auto_invoice_buyers": [
+    {
+      "ringba_buyer_name": "Rex Direct",
+      "zoho_contact_name": "Rex Direct",
+      "zoho_item_name": "Dental",
+      "discord_name": "Rex Direct",
+      "active": true
+    },
+    {
+      "ringba_buyer_name": "Ray Advertising",
+      "zoho_contact_name": "Ray Advertising LLC",
+      "zoho_item_name": "Dental",
+      "discord_name": "Ray Advertising",
+      "active": true
+    }
+  ],
+
+  "reminder_buyers": [
+    {
+      "ringba_buyer_name": "Aragon Advertising",
+      "discord_name": "Aragon Advertising",
+      "active": true
+    },
+    {
+      "ringba_buyer_name": "1800Dentist",
+      "discord_name": "1800Dentist",
+      "active": true
+    },
+    {
+      "ringba_buyer_name": "Rex Direct",
+      "discord_name": "Rex Direct",
+      "active": true
+    },
+    {
+      "ringba_buyer_name": "Ray Advertising",
+      "discord_name": "Ray Advertising",
+      "active": true
+    },
+    {
+      "ringba_buyer_name": "Unik Media Group",
+      "discord_name": "UNIK",
+      "active": true
+    },
+    {
+      "ringba_buyer_name": "Marketcall",
+      "discord_name": "MarketCall",
+      "active": true
+    },
+    {
+      "ringba_buyer_name": "ClickDealer",
+      "discord_name": "ClickDealer",
+      "active": true
+    }
+  ]
+}
