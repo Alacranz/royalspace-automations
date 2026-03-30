@@ -81,14 +81,19 @@ def get_buyer_revenue(
     Revenue = sum of conversionAmount (what the buyer pays Royalspace).
     Uses daily chunking to avoid pagination instability.
     """
+    # Billing calllogs cover ALL buyers → more records/day than profit system.
+    # Use 12-hour chunks to stay under 1000 records per request and avoid
+    # pagination instability (Ringba doesn't guarantee stable ordering across pages).
+    CHUNK_HOURS = 12
+
     buyer_map: dict[str, dict] = {}
     total_fetched = 0
-    day_num = 0
+    chunk_num = 0
     chunk_start = start_utc
 
     while chunk_start < end_utc:
-        day_num += 1
-        chunk_end = min(chunk_start + timedelta(hours=24) - timedelta(seconds=1), end_utc)
+        chunk_num += 1
+        chunk_end = min(chunk_start + timedelta(hours=CHUNK_HOURS) - timedelta(seconds=1), end_utc)
         day_fetched = 0
         offset = 0
 
@@ -143,8 +148,8 @@ def get_buyer_revenue(
                 break
 
         if verbose:
-            print(f"  [Ringba] Day {day_num} ({chunk_start.strftime('%m/%d')}): {day_fetched} records")
-        chunk_start += timedelta(hours=24)
+            print(f"  [Ringba] Chunk {chunk_num} ({chunk_start.strftime('%m/%d %H:%M')}): {day_fetched} records")
+        chunk_start += timedelta(hours=CHUNK_HOURS)
 
     print(f"  [Ringba Buyer] Total records processed: {total_fetched}")
     return buyer_map
