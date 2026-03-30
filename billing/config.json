@@ -6,6 +6,7 @@
   "auto_invoice_buyers": [
     {
       "ringba_buyer_name": "Rex Direct",
+      "ringba_buyer_sub_id": "1401",
       "zoho_contact_name": "Rex Direct",
       "zoho_item_name": "Dental",
       "discord_name": "Rex Direct",
@@ -13,6 +14,7 @@
     },
     {
       "ringba_buyer_name": "Ray Advertising",
+      "ringba_buyer_sub_id": "1501",
       "zoho_contact_name": "Ray Advertising LLC",
       "zoho_item_name": "Dental",
       "discord_name": "Ray Advertising",
@@ -23,36 +25,43 @@
   "reminder_buyers": [
     {
       "ringba_buyer_name": "Aragon Advertising",
+      "ringba_buyer_sub_id": "701",
       "discord_name": "Aragon Advertising",
       "active": true
     },
     {
       "ringba_buyer_name": "1800Dentist",
+      "ringba_buyer_sub_id": "102",
       "discord_name": "1800Dentist",
       "active": true
     },
     {
       "ringba_buyer_name": "Rex Direct",
+      "ringba_buyer_sub_id": "1401",
       "discord_name": "Rex Direct",
       "active": true
     },
     {
       "ringba_buyer_name": "Ray Advertising",
+      "ringba_buyer_sub_id": "1501",
       "discord_name": "Ray Advertising",
       "active": true
     },
     {
       "ringba_buyer_name": "Unik Media Group",
+      "ringba_buyer_sub_id": "1105",
       "discord_name": "UNIK",
       "active": true
     },
     {
       "ringba_buyer_name": "Marketcall",
+      "ringba_buyer_sub_id": "1224",
       "discord_name": "MarketCall",
       "active": true
     },
     {
       "ringba_buyer_name": "ClickDealer",
+      "ringba_buyer_sub_id": "1521",
       "discord_name": "ClickDealer",
       "active": true
     }

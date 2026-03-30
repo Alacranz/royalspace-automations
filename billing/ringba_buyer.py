@@ -1,13 +1,15 @@
 """
 Ringba revenue by buyer — Royalspace Billing
 
-Groups call logs by buyerName and aggregates revenue (conversionAmount).
+Groups call logs by targetBuyerSubId (numeric ID) and aggregates revenue.
 The "Revenue" column in the Ringba Buyer report = sum of conversionAmount
 for all calls routed to each buyer.
+
+Uses targetBuyerSubId (e.g. "1401") instead of buyer name to avoid
+naming variations between API and UI.
 """
 from __future__ import annotations
 
-import re
 import sys
 import os
 from datetime import datetime, timedelta, timezone
@@ -18,29 +20,13 @@ import requests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "profit"))
 from common.ringba_client import RINGBA_BASE_URL, PAGE_SIZE, MAX_PAGES, to_float
 
-VET = pytz.timezone("America/Caracas")
 
-
-def normalize_buyer_name(name: str) -> str:
-    """
-    Strips Ringba's numeric prefix e.g. '(701) Aragon Advertising' → 'aragon advertising'
-    Same logic as normalize_name() in ringba_client.py but applied to buyer names.
-    """
-    if not name or not name.strip():
-        return ""
-    n = name.strip()
-    n = re.sub(r'^\(\d+\)\s*', '', n)
-    return n.strip().lower()
-
-
-def get_month_utc_range(year: int, month: int, tz_name: str = "America/New_York") -> tuple[datetime, datetime]:
+def get_month_utc_range(year: int, month: int, tz_name: str = "America/Caracas") -> tuple[datetime, datetime]:
     """
     Returns (start_utc, end_utc) covering the full calendar month in the given timezone.
     """
     tz = pytz.timezone(tz_name)
-    # First moment of the month
     start_local = tz.localize(datetime(year, month, 1, 0, 0, 0))
-    # First moment of the next month - 1 second = last moment of this month
     if month == 12:
         next_month = datetime(year + 1, 1, 1, 0, 0, 0)
     else:
@@ -53,7 +39,7 @@ def get_month_utc_range(year: int, month: int, tz_name: str = "America/New_York"
     )
 
 
-def get_current_month_utc_range(tz_name: str = "America/New_York") -> tuple[datetime, datetime]:
+def get_current_month_utc_range(tz_name: str = "America/Caracas") -> tuple[datetime, datetime]:
     """Returns (start_utc, now_utc) for the current month so far."""
     tz = pytz.timezone(tz_name)
     now_local = datetime.now(tz)
@@ -72,18 +58,18 @@ def get_buyer_revenue(
     verbose: bool = False,
 ) -> dict[str, dict]:
     """
-    Queries Ringba calllogs and aggregates revenue by buyerName.
+    Queries Ringba calllogs and aggregates revenue by targetBuyerSubId.
 
-    Returns dict: normalized_buyer_name → {
-        raw_name, revenue, calls, conversions, connected
+    Returns dict: buyer_sub_id (str) → {
+        raw_name, sub_id, revenue, calls, conversions, connected
     }
 
     Revenue = sum of conversionAmount (what the buyer pays Royalspace).
-    Uses daily chunking to avoid pagination instability.
+
+    Uses 12-hour chunks to stay under 1000 records per request and avoid
+    pagination instability (Ringba doesn't guarantee stable ordering across pages).
+    Billing calllogs cover ALL buyers → more records/day than the profit system.
     """
-    # Billing calllogs cover ALL buyers → more records/day than profit system.
-    # Use 12-hour chunks to stay under 1000 records per request and avoid
-    # pagination instability (Ringba doesn't guarantee stable ordering across pages).
     CHUNK_HOURS = 12
 
     buyer_map: dict[str, dict] = {}
@@ -94,7 +80,7 @@ def get_buyer_revenue(
     while chunk_start < end_utc:
         chunk_num += 1
         chunk_end = min(chunk_start + timedelta(hours=CHUNK_HOURS) - timedelta(seconds=1), end_utc)
-        day_fetched = 0
+        chunk_fetched = 0
         offset = 0
 
         for _page in range(1, MAX_PAGES + 1):
@@ -118,21 +104,24 @@ def get_buyer_revenue(
             if not records:
                 break
 
-
             for r in records:
-                raw = str(r.get("buyer") or r.get("buyerName") or "")
-                key = normalize_buyer_name(raw) or "unknown"
+                sub_id = str(r.get("targetBuyerSubId") or "")
+                if not sub_id:
+                    continue
 
-                if key not in buyer_map:
-                    buyer_map[key] = {
-                        "raw_name":    raw,
+                raw_name = str(r.get("buyer") or "")
+
+                if sub_id not in buyer_map:
+                    buyer_map[sub_id] = {
+                        "raw_name":    raw_name,
+                        "sub_id":      sub_id,
                         "revenue":     0.0,
                         "calls":       0,
                         "connected":   0,
                         "conversions": 0,
                     }
 
-                m = buyer_map[key]
+                m = buyer_map[sub_id]
                 m["calls"] += 1
                 if r.get("hasConnected") is True:
                     m["connected"] += 1
@@ -140,32 +129,21 @@ def get_buyer_revenue(
                     m["conversions"] += 1
                 m["revenue"] += to_float(r.get("conversionAmount"))
 
-            day_fetched   += len(records)
-            total_fetched += len(records)
-            offset        += len(records)
+            chunk_fetched  += len(records)
+            total_fetched  += len(records)
+            offset         += len(records)
 
             if len(records) < PAGE_SIZE:
                 break
 
         if verbose:
-            print(f"  [Ringba] Chunk {chunk_num} ({chunk_start.strftime('%m/%d %H:%M')}): {day_fetched} records")
+            print(f"  [Ringba] Chunk {chunk_num} ({chunk_start.strftime('%m/%d %H:%M')}): {chunk_fetched} records")
         chunk_start += timedelta(hours=CHUNK_HOURS)
 
     print(f"  [Ringba Buyer] Total records processed: {total_fetched}")
     return buyer_map
 
 
-def find_buyer(buyer_map: dict, buyer_name: str) -> float:
-    """
-    Find a buyer's revenue in the map by matching their name (case-insensitive, prefix-stripped).
-    Returns 0.0 if not found.
-    """
-    key = normalize_buyer_name(buyer_name)
-    entry = buyer_map.get(key)
-    return entry["revenue"] if entry else 0.0
-
-
-def find_buyer_data(buyer_map: dict, buyer_name: str) -> dict | None:
-    """Returns the full buyer data dict, or None if not found."""
-    key = normalize_buyer_name(buyer_name)
-    return buyer_map.get(key)
+def find_buyer_data(buyer_map: dict, buyer_sub_id: str) -> dict | None:
+    """Returns buyer data by numeric sub ID (e.g. '1401'), or None if not found."""
+    return buyer_map.get(str(buyer_sub_id))

@@ -102,7 +102,7 @@ def _send_revenue_report(
 
     total = 0.0
     for b in buyers:
-        data = find_buyer_data(buyer_map, b["ringba_buyer_name"])
+        data = find_buyer_data(buyer_map, b["ringba_buyer_sub_id"])
         if data and data["revenue"] > 0:
             rev   = data["revenue"]
             calls = data["calls"]

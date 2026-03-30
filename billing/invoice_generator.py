@@ -115,26 +115,26 @@ def run() -> None:
     results = []
 
     for buyer in buyers:
-        ringba_name = buyer["ringba_buyer_name"]
-        zoho_name   = buyer["zoho_contact_name"]
-        item_name   = buyer.get("zoho_item_name", "Dental")
-        display     = buyer["discord_name"]
+        ringba_sub_id = buyer["ringba_buyer_sub_id"]
+        zoho_name     = buyer["zoho_contact_name"]
+        item_name     = buyer.get("zoho_item_name", "Dental")
+        display       = buyer["discord_name"]
 
         print(f"\n[{display}] Processing...")
 
-        # Get Ringba revenue
-        buyer_data = find_buyer_data(buyer_map, ringba_name)
+        # Get Ringba revenue by buyer sub ID
+        buyer_data = find_buyer_data(buyer_map, ringba_sub_id)
         if buyer_data:
             revenue     = buyer_data["revenue"]
             calls       = buyer_data["calls"]
             conversions = buyer_data["conversions"]
         else:
-            print(f"  [Warning] No Ringba data for '{ringba_name}' — skipping")
+            print(f"  [Warning] No Ringba data for sub_id='{ringba_sub_id}' — skipping")
             results.append({"buyer": display, "status": "NO DATA", "revenue": 0.0, "invoice": ""})
             continue
 
         if revenue <= 0:
-            print(f"  [Warning] Revenue is $0 for '{ringba_name}' — skipping invoice")
+            print(f"  [Warning] Revenue is $0 for sub_id='{ringba_sub_id}' — skipping invoice")
             results.append({"buyer": display, "status": "REVENUE $0", "revenue": 0.0, "invoice": ""})
             continue
 
