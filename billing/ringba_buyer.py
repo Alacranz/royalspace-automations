@@ -120,7 +120,7 @@ def get_buyer_revenue(
                 print(f"  [Ringba Buyer Debug] Sample buyer-related fields: {buyer_fields}")
 
             for r in records:
-                raw = str(r.get("buyerName") or r.get("targetName") or "")
+                raw = str(r.get("buyer") or r.get("buyerName") or "")
                 key = normalize_buyer_name(raw) or "unknown"
 
                 if key not in buyer_map:
