@@ -28,7 +28,7 @@ from common.discord_client import send as discord_send   # noqa: E402
 from billing.ringba_buyer import (                        # noqa: E402
     get_buyer_revenue, get_current_month_utc_range, find_buyer_data
 )
-from billing.payment_tracker import get_outstanding_invoices  # noqa: E402
+from billing.payment_tracker import get_outstanding_invoices, refresh_statuses  # noqa: E402
 
 EST = pytz.timezone("America/New_York")
 
@@ -48,6 +48,7 @@ def load_config() -> dict:
 def run() -> None:
     config          = load_config()
     tz_name         = config.get("timezone", "America/New_York")
+    threshold       = config.get("invoice_threshold_usd", 0)
     reminder_buyers = [b for b in config["reminder_buyers"] if b.get("active", True)]
 
     ringba_token    = os.environ["RINGBA_API_TOKEN"]
@@ -69,6 +70,14 @@ def run() -> None:
     print("\n[Ringba] Fetching buyer revenue...")
     buyer_map = get_buyer_revenue(ringba_token, ringba_acct, start_utc, end_utc, verbose=False)
 
+    # ── Refresh invoice statuses in Sheet (PENDIENTE → VENCIDO if overdue) ────
+    if gsheets_creds and spreadsheet_id:
+        try:
+            print("\n[Sheets] Refreshing invoice statuses...")
+            refresh_statuses(spreadsheet_id, gsheets_creds)
+        except Exception as e:
+            print(f"  [Sheets] Error refreshing statuses: {e}")
+
     # ── Outstanding invoices from Sheets ─────────────────────────────────────
     outstanding = []
     if gsheets_creds and spreadsheet_id:
@@ -79,7 +88,7 @@ def run() -> None:
             print(f"  [Sheets] Error fetching invoices: {e}")
 
     # ── Build Discord messages ─────────────────────────────────────────────────
-    _send_revenue_report(discord_webhook, month_label, reminder_buyers, buyer_map)
+    _send_revenue_report(discord_webhook, month_label, reminder_buyers, buyer_map, threshold)
 
     if outstanding:
         _send_outstanding_report(discord_webhook, outstanding)
@@ -92,12 +101,14 @@ def _send_revenue_report(
     month_label: str,
     buyers: list[dict],
     buyer_map: dict,
+    threshold: float = 0,
 ) -> None:
+    threshold_label = f"  (threshold: ${threshold:,.0f})" if threshold > 0 else ""
     lines = [
-        f"REVENUE POR BUYER — {month_label} (acumulado)",
+        f"REVENUE POR BUYER — {month_label} (acumulado){threshold_label}",
         "",
-        f"{'Buyer':<22} {'Revenue':>10}  {'Calls':>6}  {'Conv':>5}",
-        "-" * 52,
+        f"{'Buyer':<22} {'Revenue':>10}  {'Calls':>6}  {'Conv':>5}  {'':}",
+        "-" * 58,
     ]
 
     total = 0.0
@@ -108,11 +119,12 @@ def _send_revenue_report(
             calls = data["calls"]
             convs = data["conversions"]
             total += rev
-            lines.append(f"{b['discord_name']:<22} ${rev:>9,.2f}  {calls:>6}  {convs:>5}")
+            flag  = f"  BAJO THRESHOLD" if threshold > 0 and rev < threshold else ""
+            lines.append(f"{b['discord_name']:<22} ${rev:>9,.2f}  {calls:>6}  {convs:>5}{flag}")
         else:
             lines.append(f"{b['discord_name']:<22} {'$0.00':>10}  {'—':>6}  {'—':>5}")
 
-    lines.extend(["-" * 52, f"{'TOTAL':<22} ${total:>9,.2f}"])
+    lines.extend(["-" * 58, f"{'TOTAL':<22} ${total:>9,.2f}"])
 
     msg = "```\n" + "\n".join(lines) + "\n```"
     discord_send(webhook, msg)

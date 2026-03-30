@@ -23,6 +23,8 @@ import os
 import sys
 from datetime import datetime, date, timedelta
 
+import requests
+
 import pytz
 
 # ── Path setup ────────────────────────────────────────────────────────────────
@@ -36,7 +38,7 @@ from billing.zoho_client import (                        # noqa: E402
     get_access_token, get_contact_id, get_contact_emails, create_invoice, send_invoice
 )
 from billing.ringba_buyer import get_buyer_revenue, get_month_utc_range, find_buyer_data  # noqa: E402
-from billing.payment_tracker import log_invoice  # noqa: E402
+from billing.payment_tracker import log_invoice, refresh_statuses  # noqa: E402
 
 EST = pytz.timezone("America/New_York")
 
@@ -68,10 +70,11 @@ def load_config() -> dict:
 
 def run() -> None:
     config   = load_config()
-    org_id   = config["zoho_org_id"]
-    tz_name  = config.get("timezone", "America/New_York")
-    due_days = config.get("invoice_due_days", 30)
-    buyers   = [b for b in config["auto_invoice_buyers"] if b.get("active", True)]
+    org_id    = config["zoho_org_id"]
+    tz_name   = config.get("timezone", "America/New_York")
+    due_days  = config.get("invoice_due_days", 30)
+    threshold = config.get("invoice_threshold_usd", 0)
+    buyers    = [b for b in config["auto_invoice_buyers"] if b.get("active", True)]
 
     # ── Secrets ───────────────────────────────────────────────────────────────
     ringba_token    = os.environ["RINGBA_API_TOKEN"]
@@ -119,6 +122,7 @@ def run() -> None:
         zoho_name     = buyer["zoho_contact_name"]
         item_name     = buyer.get("zoho_item_name", "Dental")
         display       = buyer["discord_name"]
+        do_send       = buyer.get("send_invoice", True)
 
         print(f"\n[{display}] Processing...")
 
@@ -138,13 +142,18 @@ def run() -> None:
             results.append({"buyer": display, "status": "REVENUE $0", "revenue": 0.0, "invoice": ""})
             continue
 
+        if threshold > 0 and revenue < threshold:
+            print(f"  [Warning] Revenue ${revenue:,.2f} below threshold ${threshold:,.2f} — skipping invoice")
+            results.append({"buyer": display, "status": f"BELOW ${threshold:,.0f}", "revenue": revenue, "invoice": ""})
+            continue
+
         print(f"  Revenue: ${revenue:,.2f} | Calls: {calls} | Conversions: {conversions}")
 
         try:
             # Get Zoho contact ID and email addresses
             contact_id = get_contact_id(zoho_token, org_id, zoho_name)
             contact_emails = get_contact_emails(zoho_token, org_id, contact_id)
-            print(f"  [Zoho] Contact ID: {contact_id} | Emails: {contact_emails}")
+            print(f"  [Zoho] Contact ID: {contact_id} | Emails: {len(contact_emails)} address(es)")
 
             # Build line item
             line_items = [{
@@ -171,6 +180,8 @@ def run() -> None:
             # Send invoice via Zoho email
             if dry_run:
                 print(f"  [DRY RUN] Skipping email send for {invoice_number}")
+            elif not do_send:
+                print(f"  [Info] send_invoice=false — invoice created but not emailed")
             else:
                 send_invoice(zoho_token, org_id, invoice_id, contact_emails)
 
@@ -193,14 +204,18 @@ def run() -> None:
                 "invoice": invoice_number,
             })
 
+        except requests.HTTPError as e:
+            msg = f"HTTP {e.response.status_code}"
+            print(f"  [ERROR] {msg}")
+            results.append({"buyer": display, "status": f"ERROR: {msg}", "revenue": revenue, "invoice": ""})
         except Exception as e:
-            print(f"  [ERROR] {e}")
-            results.append({
-                "buyer":   display,
-                "status":  f"ERROR: {e}",
-                "revenue": revenue,
-                "invoice": "",
-            })
+            msg = f"{type(e).__name__}: {e}"
+            print(f"  [ERROR] {msg}")
+            results.append({"buyer": display, "status": f"ERROR: {msg}", "revenue": revenue, "invoice": ""})
+
+    # ── Refresh invoice statuses in Sheet (PENDIENTE → VENCIDO if overdue) ────
+    print("\n[Sheets] Refreshing invoice statuses...")
+    refresh_statuses(spreadsheet_id, gsheets_creds)
 
     # ── Discord summary ────────────────────────────────────────────────────────
     _send_discord_summary(discord_webhook, month_label, invoice_date, due_date_str, results)

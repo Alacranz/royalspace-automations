@@ -140,6 +140,37 @@ def update_payment(
     return False
 
 
+def refresh_statuses(spreadsheet_id: str, creds_json: str) -> int:
+    """
+    Sweeps all PENDIENTE rows and updates any whose due date has passed to VENCIDO.
+    Returns the number of rows updated.
+    """
+    ws = _open_sheet(spreadsheet_id, creds_json)
+    all_values = ws.get_all_values()
+    today = datetime.utcnow().date()
+    updated = 0
+
+    for i, row in enumerate(all_values[1:], start=2):  # skip header
+        if len(row) < 9:
+            continue
+        if row[8].strip().upper() != "PENDIENTE":
+            continue
+        try:
+            due = datetime.strptime(row[5], "%d/%m/%Y").date()
+        except ValueError:
+            continue
+        if today > due:
+            ws.update(f"I{i}", [["VENCIDO"]])
+            updated += 1
+            print(f"  [Sheets] Row {i} ({row[4]}) → VENCIDO")
+
+    if updated:
+        print(f"  [Sheets] {updated} invoice(s) marked VENCIDO")
+    else:
+        print("  [Sheets] All invoices up to date")
+    return updated
+
+
 def get_outstanding_invoices(spreadsheet_id: str, creds_json: str) -> list[dict]:
     """
     Returns all rows with Estado = PENDIENTE.

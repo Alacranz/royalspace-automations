@@ -12,5 +12,8 @@ def send(webhook: str, message: str) -> None:
         raise ValueError("Webhook de Discord vacío")
     if len(message) > MAX_LENGTH:
         message = message[:MAX_LENGTH] + "\n..."
-    resp = requests.post(webhook, json={"content": message}, timeout=15)
-    resp.raise_for_status()
+    try:
+        resp = requests.post(webhook, json={"content": message}, timeout=15)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        raise RuntimeError("Discord webhook request failed") from e
