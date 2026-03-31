@@ -319,8 +319,11 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
 
             print(f"    → DECISIÓN: {decision}")
 
+            discord_uid = mb.get("discord_user_id", "")
+            mention     = f"<@{discord_uid}>\n" if discord_uid and hook != WEBHOOK_MOD else ""
+
             if decision in ("ALERT", "REPEAT", "WORSENED"):
-                msg = "\n".join([
+                msg = mention + "\n".join([
                     "```",
                     "⚠ META ADS ALERTA",
                     "",
@@ -341,7 +344,7 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
                 mark_alert(s, cpr)
 
             elif decision == "RECOVERY":
-                msg = "\n".join([
+                msg = mention + "\n".join([
                     "```",
                     f"RECUPERADO — {mb_name}",
                     f"Ad Set : {adset_name}",
