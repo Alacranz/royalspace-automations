@@ -10,9 +10,7 @@ name: Profit — MB Daily Summary
 #   2. MB External Daily Summary → DISCORD_WEBHOOK_MB_EXTERNAL
 
 on:
-  schedule:
-    - cron: "55 12 * * *"     # 7:55 AM EST (UTC-5) · lunes a domingo
-  workflow_dispatch:
+  workflow_dispatch:  # Solo manual — el daily summary ahora corre dentro de profit_true_profit.yml
 
 jobs:
   mb-daily-summary:
