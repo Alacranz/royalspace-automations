@@ -33,8 +33,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytz
-
 sys.path.insert(0, os.path.dirname(__file__))
 from common.business_hours import is_business_hours
 from common.discord_client import send as discord_send
@@ -105,14 +103,6 @@ def main() -> None:
     if not is_business_hours():
         print("Fuera de horario laboral. Script detenido.")
         return
-
-    # Primer run del día (8:00 AM EST): enviar daily summary de ayer primero
-    now_est = datetime.now(pytz.timezone("America/New_York"))
-    if now_est.hour == 8:
-        print("=== Primer run del día — enviando MB Daily Summary de ayer ===")
-        from mb_daily_summary import main as daily_summary_main
-        daily_summary_main()
-        print("=== Daily Summary completado ===\n")
 
     with open(CONFIG_PATH, encoding="utf-8") as f:
         config = json.load(f)
