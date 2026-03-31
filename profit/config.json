@@ -22,6 +22,7 @@
       "royalspace_spend_share": 0.5,
       "media_buyer_spend_share": 0.5,
       "category": "internal",
+      "discord_user_id": "1368941301021544509",
       "active": true
     },
     {
@@ -31,6 +32,7 @@
       "royalspace_spend_share": 0.5,
       "media_buyer_spend_share": 0.5,
       "category": "internal",
+      "discord_user_id": "495953565265690625",
       "active": true
     },
     {
@@ -40,6 +42,7 @@
       "royalspace_spend_share": 0.5,
       "media_buyer_spend_share": 0.5,
       "category": "internal",
+      "discord_user_id": "751631878741819454",
       "active": true
     },
     {
@@ -49,6 +52,7 @@
       "royalspace_spend_share": 0.5,
       "media_buyer_spend_share": 0.5,
       "category": "internal",
+      "discord_user_id": "1237461387396124813",
       "active": true
     },
     {
@@ -58,6 +62,7 @@
       "royalspace_spend_share": 0.5,
       "media_buyer_spend_share": 0.5,
       "category": "internal",
+      "discord_user_id": "747910885087117343",
       "active": true
     },
     {
@@ -67,6 +72,7 @@
       "royalspace_spend_share": 0.5,
       "media_buyer_spend_share": 0.5,
       "category": "internal",
+      "discord_user_id": "997341048697258024",
       "active": true
     },
     {
@@ -76,6 +82,7 @@
       "royalspace_spend_share": 0.5,
       "media_buyer_spend_share": 0.5,
       "category": "external",
+      "discord_user_id": "504105963389976576",
       "active": true
     },
     {
@@ -85,6 +92,7 @@
       "royalspace_spend_share": 0.5,
       "media_buyer_spend_share": 0.5,
       "category": "external",
+      "discord_user_id": "850862579839533087",
       "active": true
     }
   ]
