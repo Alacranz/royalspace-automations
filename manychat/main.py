@@ -133,6 +133,10 @@ ZIP_REGEX = re.compile(r'\b\d{5}\b')
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
+HAIKU_INPUT_COST  = 0.80 / 1_000_000   # $ per token
+HAIKU_OUTPUT_COST = 4.00 / 1_000_000   # $ per token
+
+
 def init_db() -> None:
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
@@ -149,7 +153,25 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_sub_created
             ON messages (subscriber_id, created_at)
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS token_log (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                input_tokens  INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                cost_usd      REAL    NOT NULL,
+                created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
+
+
+def log_tokens(input_tokens: int, output_tokens: int) -> None:
+    cost = input_tokens * HAIKU_INPUT_COST + output_tokens * HAIKU_OUTPUT_COST
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO token_log (input_tokens, output_tokens, cost_usd) VALUES (?,?,?)",
+            (input_tokens, output_tokens, cost),
+        )
 
 
 @contextmanager
@@ -350,6 +372,7 @@ async def chat(req: ChatRequest) -> JSONResponse:
             messages=messages,
         )
         reply = result.content[0].text.strip()
+        log_tokens(result.usage.input_tokens, result.usage.output_tokens)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Claude error: {type(e).__name__}")
 
@@ -367,6 +390,36 @@ async def chat(req: ChatRequest) -> JSONResponse:
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/stats")
+async def stats() -> JSONResponse:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    with get_conn() as conn:
+        def q(sql, *args):
+            return conn.execute(sql, args).fetchone()[0] or 0
+
+        msgs_today   = q("SELECT COUNT(*) FROM messages WHERE role='user' AND created_at LIKE ?", f"{today}%")
+        msgs_month   = q("SELECT COUNT(*) FROM messages WHERE role='user' AND created_at LIKE ?", f"{month}%")
+        convs_today  = q("SELECT COUNT(DISTINCT subscriber_id) FROM messages WHERE role='user' AND created_at LIKE ?", f"{today}%")
+        convs_month  = q("SELECT COUNT(DISTINCT subscriber_id) FROM messages WHERE role='user' AND created_at LIKE ?", f"{month}%")
+        cost_today   = q("SELECT COALESCE(SUM(cost_usd),0) FROM token_log WHERE created_at LIKE ?", f"{today}%")
+        cost_month   = q("SELECT COALESCE(SUM(cost_usd),0) FROM token_log WHERE created_at LIKE ?", f"{month}%")
+        tok_in_month = q("SELECT COALESCE(SUM(input_tokens),0) FROM token_log WHERE created_at LIKE ?", f"{month}%")
+        tok_out_month= q("SELECT COALESCE(SUM(output_tokens),0) FROM token_log WHERE created_at LIKE ?", f"{month}%")
+
+    return JSONResponse({
+        "date": today,
+        "messages_today":       msgs_today,
+        "messages_month":       msgs_month,
+        "conversations_today":  convs_today,
+        "conversations_month":  convs_month,
+        "cost_today_usd":       round(cost_today, 4),
+        "cost_month_usd":       round(cost_month, 4),
+        "tokens_in_month":      tok_in_month,
+        "tokens_out_month":     tok_out_month,
+    })
 
 
 if __name__ == "__main__":
