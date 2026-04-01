@@ -80,6 +80,7 @@ def get_github_usage() -> dict:
             timeout=15,
         )
         if r.status_code != 200:
+            print(f"[GitHub] HTTP {r.status_code}: {r.text[:200]}")
             return {"error": f"HTTP {r.status_code}"}
         data = r.json()
         return {
@@ -150,7 +151,7 @@ def build_message(stats: dict, railway: dict, github: dict) -> str:
 
     # GitHub display
     if "error" in github:
-        github_block = "  Sin datos (token insuficiente)"
+        github_block = f"  Error: {github['error']}"
     else:
         gh_used  = github.get("used_minutes", 0)
         gh_total = github.get("included_minutes", 2000)
