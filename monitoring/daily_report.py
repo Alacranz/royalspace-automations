@@ -29,27 +29,8 @@ def get_webhook_stats() -> dict:
 # ── 2. Créditos de Railway ────────────────────────────────────────────────────
 
 def get_railway_credits() -> dict:
-    if not RAILWAY_TOKEN:
-        return {"error": "sin token"}
-    # Consulta el uso del proyecto actual via REST API de Railway
-    try:
-        r = requests.get(
-            "https://railway.com/api/v1/projects",
-            headers={
-                "Authorization": f"Bearer {RAILWAY_TOKEN}",
-                "Accept": "application/json",
-            },
-            timeout=15,
-        )
-        if r.status_code == 401:
-            return {"error": "token inválido"}
-        if r.status_code != 200:
-            return {"error": f"HTTP {r.status_code}"}
-        # No hay billing via REST — retornamos señal de token válido
-        return {"token_valid": True}
-    except Exception as e:
-        print(f"[Error] Railway API: {e}")
-        return {"error": str(e)}
+    # Railway Hobby plan no expone billing via API — datos estáticos
+    return {"static": True}
 
 # ── 3. GitHub Actions usage ──────────────────────────────────────────────────
 
@@ -132,10 +113,8 @@ def build_message(stats: dict, railway: dict, github: dict) -> str:
     # Railway display
     if "error" in railway:
         railway_block = f"  Error: {railway['error']}"
-    elif railway.get("token_valid"):
-        railway_block = "  Hobby plan activo\n  Ver uso: railway.com/dashboard"
     else:
-        railway_block = "  Sin datos"
+        railway_block = "  Hobby plan — ver uso: railway.com/dashboard"
 
     # GitHub display
     if "error" in github:
