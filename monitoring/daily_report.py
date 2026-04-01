@@ -39,6 +39,7 @@ def get_railway_credits() -> dict:
           currentPeriodEnd
         }
         credits
+        remainingUsageCredits
       }
     }
     """
@@ -52,9 +53,11 @@ def get_railway_credits() -> dict:
         data = r.json()
         me = data.get("data", {}).get("me", {})
         usage = me.get("usage", {})
+        print(f"[Railway] raw me: {me}")
+        credits = me.get("remainingUsageCredits") or me.get("credits", 0)
         return {
             "estimated_usage": usage.get("estimatedUsage", 0),
-            "credits":         me.get("credits", 0),
+            "credits":         credits,
         }
     except Exception as e:
         print(f"[Error] Railway API: {e}")
@@ -63,7 +66,7 @@ def get_railway_credits() -> dict:
 # ── 3. GitHub Actions usage ──────────────────────────────────────────────────
 
 def get_github_usage() -> dict:
-    token = os.environ.get("GITHUB_TOKEN", "")
+    token = os.environ.get("GH_BILLING_TOKEN", "")
     owner = os.environ.get("GITHUB_REPO_OWNER", "")
     if not token or not owner:
         return {"error": "sin token"}
