@@ -11,7 +11,8 @@
       "zoho_contact_name": "Rex Direct",
       "zoho_item_name": "Dental",
       "discord_name": "Rex Direct",
-      "send_invoice": true,
+      "send_invoice": false,
+      "_send_invoice_note": "TEMPORAL: false hasta 28-abr. Cambiar a true antes del 28-may para factura de abril",
       "active": true
     },
     {
@@ -20,7 +21,8 @@
       "zoho_contact_name": "Ray Advertising LLC",
       "zoho_item_name": "Dental",
       "discord_name": "Ray Advertising",
-      "send_invoice": true,
+      "send_invoice": false,
+      "_send_invoice_note": "TEMPORAL: false hasta 28-abr. Cambiar a true antes del 28-may para factura de abril",
       "active": true
     },
     {
