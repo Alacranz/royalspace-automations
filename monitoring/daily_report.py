@@ -31,12 +31,15 @@ def get_webhook_stats() -> dict:
 def get_railway_credits() -> dict:
     if not RAILWAY_TOKEN:
         return {"error": "sin token"}
-    # Introspección para encontrar campos de billing disponibles
     introspect = """
     query {
       __schema {
         queryType {
-          fields { name }
+          fields {
+            name
+            args { name type { name kind ofType { name kind } } }
+            type { name kind ofType { name fields { name type { name kind } } } }
+          }
         }
       }
     }
@@ -49,12 +52,12 @@ def get_railway_credits() -> dict:
             headers=headers,
             timeout=15,
         )
-        fields = [f["name"] for f in r.json().get("data", {}).get("__schema", {}).get("queryType", {}).get("fields", [])]
-        print(f"[Railway] top-level queries: {fields}")
-        # Buscar campos relacionados con billing/usage
-        billing_fields = [f for f in fields if any(k in f.lower() for k in ["usage", "billing", "credit", "cost", "spend"])]
-        print(f"[Railway] billing-related: {billing_fields}")
-        return {"static": True, "fields": billing_fields}
+        all_fields = r.json().get("data", {}).get("__schema", {}).get("queryType", {}).get("fields", [])
+        for f in all_fields:
+            if f["name"] in ("estimatedUsage", "usage"):
+                print(f"[Railway] {f['name']} args: {f.get('args')}")
+                print(f"[Railway] {f['name']} type: {f.get('type')}")
+        return {"static": True}
     except Exception as e:
         print(f"[Error] Railway introspect: {e}")
         return {"static": True}
