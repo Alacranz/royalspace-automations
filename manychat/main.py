@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Generator
 
 import anthropic
+import requests as http_requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -148,6 +149,21 @@ def extract_zip(text: str) -> str | None:
     return match.group(0) if match else None
 
 
+def resolve_zip(zip_code: str) -> str:
+    """Return 'City, State' for a US zip code, or the zip itself if lookup fails."""
+    try:
+        resp = http_requests.get(
+            f"https://api.zippopotam.us/us/{zip_code}", timeout=5
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            place = data["places"][0]
+            return f"{place['place name']}, {place['state abbreviation']}"
+    except Exception:
+        pass
+    return zip_code
+
+
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="Dentista Latino Webhook")
@@ -188,7 +204,8 @@ async def chat(req: ChatRequest) -> JSONResponse:
     if req.first_name:
         context_note += f"El nombre del usuario es {req.first_name}. "
     if zip_info:
-        context_note += f"Su código postal es {zip_info}. "
+        location = resolve_zip(zip_info)
+        context_note += f"Su código postal es {zip_info} ({location}). Usa el nombre de la ciudad '{location}' al referirte al área, no el número del zip code. "
 
     system = SYSTEM_PROMPT
     if context_note:
