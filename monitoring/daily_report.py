@@ -60,9 +60,37 @@ def get_railway_credits() -> dict:
         print(f"[Error] Railway API: {e}")
         return {"error": str(e)}
 
-# ── 3. Componer mensaje Discord ───────────────────────────────────────────────
+# ── 3. GitHub Actions usage ──────────────────────────────────────────────────
 
-def build_message(stats: dict, railway: dict) -> str:
+def get_github_usage() -> dict:
+    token = os.environ.get("GITHUB_TOKEN", "")
+    owner = os.environ.get("GITHUB_REPO_OWNER", "")
+    if not token or not owner:
+        return {"error": "sin token"}
+    try:
+        r = requests.get(
+            f"https://api.github.com/users/{owner}/settings/billing/actions",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return {"error": f"HTTP {r.status_code}"}
+        data = r.json()
+        return {
+            "used_minutes":     data.get("total_minutes_used", 0),
+            "included_minutes": data.get("included_minutes", 2000),
+            "paid_minutes":     data.get("total_paid_minutes_used", 0),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ── 4. Componer mensaje Discord ───────────────────────────────────────────────
+
+def build_message(stats: dict, railway: dict, github: dict) -> str:
     now   = datetime.now(timezone.utc)
     today = now.strftime("%d/%m/%Y")
 
@@ -95,41 +123,67 @@ def build_message(stats: dict, railway: dict) -> str:
 
     railway_credits = railway.get("credits", None)
     railway_usage   = railway.get("estimated_usage", None)
-    if railway_credits is not None and railway_credits < 100:  # Railway credits en centavos
+    if railway_credits is not None and railway_credits < 100:
         alerts.append("⚠️ RAILWAY: créditos bajos — revisar plan")
+
+    gh_used = github.get("used_minutes", 0)
+    gh_total = github.get("included_minutes", 2000)
+    if "error" not in github:
+        gh_pct = gh_used / gh_total * 100 if gh_total else 0
+        if gh_pct >= 90:
+            alerts.append("🚨 GITHUB: minutos al límite (>90%) — acciones pueden fallar")
+        elif gh_pct >= 75:
+            alerts.append("⚠️ GITHUB: minutos al 75% — monitorear")
 
     alert_block = "\n".join(alerts) if alerts else "✅ Todo en orden"
 
     # Railway display
     if "error" in railway:
-        railway_block = f"  Sin datos (configura RAILWAY_TOKEN)"
+        railway_block = "  Sin datos (configura RAILWAY_TOKEN)"
     else:
         rw_used = f"${railway_usage/100:.2f}" if railway_usage is not None else "?"
         rw_bal  = f"${railway_credits/100:.2f}" if railway_credits is not None else "$5.00 (trial)"
-        railway_block = f"  Gastado este mes   : {rw_used}\n  Créditos restantes : {rw_bal}"
+        railway_block = f"  Gastado este mes   : {rw_used}\n  Creditos restantes : {rw_bal}"
+
+    # GitHub display
+    if "error" in github:
+        github_block = "  Sin datos (token insuficiente)"
+    else:
+        gh_used  = github.get("used_minutes", 0)
+        gh_total = github.get("included_minutes", 2000)
+        gh_left  = gh_total - gh_used
+        gh_pct   = gh_used / gh_total * 100 if gh_total else 0
+        github_block = (
+            f"  Minutos usados     : {gh_used} / {gh_total} ({gh_pct:.0f}%)\n"
+            f"  Minutos restantes  : {gh_left}\n"
+            f"  Plan               : Free (2,000 min/mes gratis)"
+        )
 
     lines = [
         "```",
         f"REPORTE DIARIO — {today}",
         "",
-        "─── WEBHOOK MANYCHAT ───────────────────",
+        "--- WEBHOOK MANYCHAT -------------------",
         f"  Mensajes hoy        : {msgs_today}",
         f"  Mensajes este mes   : {msgs_month}",
         f"  Contactos hoy       : {convs_today}",
         f"  Contactos este mes  : {convs_month}",
         f"  Costo hoy           : ${cost_today:.4f}",
         f"  Costo este mes      : ${cost_month:.4f}",
-        f"  Proyección mensual  : ${projection:.2f}",
+        f"  Proyeccion mensual  : ${projection:.2f}",
         "",
-        "─── ANTHROPIC (Claude Haiku) ───────────",
+        "--- ANTHROPIC (Claude Haiku) -----------",
         f"  Balance disponible  : ${anthropic_remaining:.2f}  ({anthropic_pct:.0f}%)",
         f"  Gastado este mes    : ${cost_month:.4f}",
-        f"  Proyección mensual  : ${projection:.2f}",
+        f"  Proyeccion mensual  : ${projection:.2f}",
         "",
-        "─── RAILWAY ────────────────────────────",
+        "--- RAILWAY ----------------------------",
         railway_block,
         "",
-        "─── ALERTAS ────────────────────────────",
+        "--- GITHUB ACTIONS ---------------------",
+        github_block,
+        "",
+        "--- ALERTAS ----------------------------",
         f"  {alert_block}",
         "```",
     ]
@@ -144,7 +198,10 @@ def main() -> None:
     print("Consultando Railway...")
     railway = get_railway_credits()
 
-    message = build_message(stats, railway)
+    print("Consultando GitHub Actions...")
+    github = get_github_usage()
+
+    message = build_message(stats, railway, github)
     print(message)
 
     r = requests.post(WEBHOOK_URL, json={"content": message}, timeout=15)
