@@ -57,6 +57,7 @@ TONE RULES:
 - Be brief: maximum 2-3 sentences per response.
 - Vary your phrasing naturally — don't repeat the same closing line every time.
 - NEVER invent prices, addresses, clinic names, or schedules.
+- Sound like a real, warm person — not a robot. Avoid formal or stiff phrasing. Use natural, conversational language.
 
 BEHAVIOR RULES:
 - READ THE FULL CONVERSATION HISTORY carefully before responding. If the user mentioned something before (a problem, a pain, that they called and no one answered, no coverage in their area), acknowledge it with empathy — never ignore prior context.
@@ -66,6 +67,12 @@ BEHAVIOR RULES:
 - Always end encouraging them to call us.
 - The contact number will be provided in the next step — your role is only to motivate them to call.
 - If the person has already been attended or no longer needs help, thank them warmly and say goodbye.
+
+IMAGES / ATTACHMENTS:
+- If the user sent a photo or image, NEVER mention that you cannot see it or that you are limited. Simply respond naturally to what they likely need — if it's a dental context, assume they are showing a dental concern and respond with empathy and warmth. Example: "Gracias por compartir eso. Cuéntame un poco más — ¿qué molestia estás sintiendo?"
+
+WHEN USER ASKS FOR A HUMAN / REAL PERSON:
+- Acknowledge honestly and warmly: you are a virtual assistant but the team is available when they call. Do NOT pretend you can transfer them. Say something like: "Entiendo, soy un asistente virtual — pero cuando nos llames, hablarás directamente con una persona de nuestro equipo que puede ayudarte." Then encourage them to call.
 
 URGENCY SIGNALS — when detected, respond with more energy and urgency to call NOW:
 - DENTAL EMERGENCY / PAIN: If the user mentions tooth pain, toothache, broken tooth, abscess, infection, swelling, bleeding, can't sleep from pain → respond with empathy and strong urgency: this needs attention NOW, call us immediately, don't wait.
@@ -129,7 +136,21 @@ OPT_OUT_PHRASES = [
     "que se jodan", "jodan",
 ]
 
-ZIP_REGEX = re.compile(r'\b\d{5}\b')
+ZIP_REGEX        = re.compile(r'\b\d{5}\b')
+IMAGE_URL_REGEX  = re.compile(r'https?://\S+\.(jpg|jpeg|png|gif|webp|bmp|tiff|heic)(\?\S*)?', re.IGNORECASE)
+ATTACHMENT_REGEX = re.compile(r'(messenger\.com|fbcdn|facebook\.com|cloudfront\.net|cdn\.)', re.IGNORECASE)
+
+HUMAN_AGENT_PHRASES = [
+    "comuniqueme con alguien real", "comuniqueme con una persona",
+    "quiero hablar con alguien real", "quiero hablar con una persona real",
+    "hablar con un humano", "hablar con una persona real",
+    "pon me con alguien", "ponme con alguien",
+    "con un agente", "con un representante", "con un asesor",
+    "no eres real", "eres un bot", "eres una ia", "eres inteligencia artificial",
+    "estas hablando en automatico", "respuesta automatica",
+    "I want to speak to a real person", "talk to a human", "real person",
+    "speak with someone", "talk to someone real", "connect me with an agent",
+]
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
@@ -254,6 +275,28 @@ def has_keyword(text: str, keywords: list[str]) -> bool:
     return any(kw in normalized for kw in keywords)
 
 
+def is_image_or_attachment(text: str) -> bool:
+    """True if the message is just an image/attachment URL with no real text."""
+    stripped = text.strip()
+    if IMAGE_URL_REGEX.match(stripped):
+        return True
+    if ATTACHMENT_REGEX.search(stripped) and stripped.startswith("http"):
+        return True
+    # ManyChat a veces envía solo el tipo de adjunto
+    if stripped.lower() in ("image", "photo", "sticker", "video", "audio", "file", "attachment"):
+        return True
+    # Si después de quitar la URL no queda texto real
+    cleaned = IMAGE_URL_REGEX.sub("", stripped).strip()
+    if not cleaned and "http" in stripped:
+        return True
+    return False
+
+
+def is_requesting_human(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(phrase in normalized for phrase in HUMAN_AGENT_PHRASES)
+
+
 def extract_zip(text: str) -> str | None:
     match = ZIP_REGEX.search(text)
     return match.group(0) if match else None
@@ -309,12 +352,18 @@ async def chat(req: ChatRequest) -> JSONResponse:
     returning = is_returning_user(history_full)
     user_msg_count = count_user_messages(req.subscriber_id)
 
-    # Zip: primero el campo de ManyChat, si no lo que escribe en el mensaje
-    detected_zip = req.zip_code or extract_zip(text) or ""
+    # Zip: SOLO lo que el usuario escribió explícitamente en el mensaje
+    # req.zip_code es el campo de ManyChat (puede venir de antes sin que el usuario lo haya dado en esta conv)
+    detected_zip = extract_zip(text) or req.zip_code or ""
 
-    # ── Señales de urgencia ───────────────────────────────────────────────────
-    is_pain      = has_keyword(text, PAIN_KEYWORDS)
-    is_high_value = has_keyword(text, HIGH_VALUE_KEYWORDS)
+    # ── Detectar tipo de mensaje ──────────────────────────────────────────────
+    image_sent      = is_image_or_attachment(text)
+    wants_human     = is_requesting_human(text)
+    is_pain         = has_keyword(text, PAIN_KEYWORDS)
+    is_high_value   = has_keyword(text, HIGH_VALUE_KEYWORDS)
+
+    # Si es solo imagen/adjunto sin texto, usar un placeholder para Claude
+    text_for_claude = "[El usuario envió una imagen o archivo adjunto]" if image_sent else text
 
     # ── Construir contexto para Claude ───────────────────────────────────────
     context_parts: list[str] = []
@@ -333,6 +382,21 @@ async def chat(req: ChatRequest) -> JSONResponse:
         context_parts.append(
             "This is a RETURNING USER — they have spoken with us before on a previous day. "
             "Warmly acknowledge you remember them or that they've contacted us before."
+        )
+
+    if image_sent:
+        context_parts.append(
+            "The user sent an image or photo. Do NOT mention that you cannot see it. "
+            "Respond naturally and warmly as if they are showing you a dental concern. "
+            "Ask them what they are feeling or what brought them here today."
+        )
+
+    if wants_human:
+        context_parts.append(
+            "The user is asking to speak with a real person or human agent. "
+            "Be honest: acknowledge you are a virtual assistant, but reassure them that "
+            "when they call, they will speak directly with a real person from the team who can fully help them. "
+            "Do not pretend you can transfer them right now."
         )
 
     if not detected_zip and user_msg_count >= MSGS_BEFORE_ZIP_INSIST:
@@ -360,7 +424,7 @@ async def chat(req: ChatRequest) -> JSONResponse:
     if context_parts:
         system += "\n\nCurrent user context:\n- " + "\n- ".join(context_parts)
 
-    messages = history_for_claude + [{"role": "user", "content": text}]
+    messages = history_for_claude + [{"role": "user", "content": text_for_claude}]
 
     # ── Claude ────────────────────────────────────────────────────────────────
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
