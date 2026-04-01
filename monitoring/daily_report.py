@@ -34,12 +34,13 @@ def get_railway_credits() -> dict:
     query = """
     query {
       me {
+        id
+        email
         usage {
           estimatedUsage
           currentPeriodEnd
         }
         credits
-        remainingUsageCredits
       }
     }
     """
@@ -50,11 +51,14 @@ def get_railway_credits() -> dict:
             headers={"Authorization": f"Bearer {RAILWAY_TOKEN}"},
             timeout=15,
         )
-        data = r.json()
-        me = data.get("data", {}).get("me", {})
+        raw = r.json()
+        print(f"[Railway] full response: {raw}")
+        me = raw.get("data", {}).get("me", {})
+        if not me:
+            errors = raw.get("errors", [])
+            return {"error": errors[0].get("message", "me vacío") if errors else "me vacío — usa Account token"}
         usage = me.get("usage", {})
-        print(f"[Railway] raw me: {me}")
-        credits = me.get("remainingUsageCredits") or me.get("credits", 0)
+        credits = me.get("credits", 0)
         return {
             "estimated_usage": usage.get("estimatedUsage", 0),
             "credits":         credits,
@@ -143,7 +147,7 @@ def build_message(stats: dict, railway: dict, github: dict) -> str:
 
     # Railway display
     if "error" in railway:
-        railway_block = "  Sin datos (configura RAILWAY_TOKEN)"
+        railway_block = f"  Error: {railway['error']}"
     else:
         rw_used = f"${railway_usage/100:.2f}" if railway_usage is not None else "?"
         rw_bal  = f"${railway_credits/100:.2f}" if railway_credits is not None else "$5.00 (trial)"
