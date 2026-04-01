@@ -31,20 +31,26 @@ def get_webhook_stats() -> dict:
 def get_railway_credits() -> dict:
     if not RAILWAY_TOKEN:
         return {"error": "sin token"}
+    headers = {"Authorization": f"Bearer {RAILWAY_TOKEN}"}
+
+    # Paso 1: encontrar el nombre del tipo del enum measurements y el tipo de retorno
     introspect = """
     query {
       __schema {
         queryType {
           fields {
             name
-            args { name type { name kind ofType { name kind } } }
-            type { name kind ofType { name fields { name type { name kind } } } }
+            args {
+              name
+              type { name kind ofType { name kind ofType { name kind } } }
+            }
+            type { name kind ofType { name kind fields { name type { name } } } }
           }
         }
+        types { name kind enumValues { name } }
       }
     }
     """
-    headers = {"Authorization": f"Bearer {RAILWAY_TOKEN}"}
     try:
         r = requests.post(
             "https://backboard.railway.app/graphql/v2",
@@ -52,11 +58,32 @@ def get_railway_credits() -> dict:
             headers=headers,
             timeout=15,
         )
-        all_fields = r.json().get("data", {}).get("__schema", {}).get("queryType", {}).get("fields", [])
+        data = r.json().get("data", {})
+        schema = data.get("__schema", {})
+        all_fields = schema.get("queryType", {}).get("fields", [])
+        all_types  = schema.get("types", [])
+
         for f in all_fields:
-            if f["name"] in ("estimatedUsage", "usage"):
-                print(f"[Railway] {f['name']} args: {f.get('args')}")
-                print(f"[Railway] {f['name']} type: {f.get('type')}")
+            if f["name"] == "estimatedUsage":
+                for arg in f.get("args", []):
+                    if arg["name"] == "measurements":
+                        # Navegar hasta el tipo base del elemento de lista
+                        t = arg["type"]
+                        while t.get("ofType"):
+                            t = t["ofType"]
+                        enum_name = t.get("name")
+                        print(f"[Railway] measurements enum type name: {enum_name}")
+                        # Buscar sus valores
+                        for typ in all_types:
+                            if typ["name"] == enum_name and typ["kind"] == "ENUM":
+                                vals = [v["name"] for v in (typ.get("enumValues") or [])]
+                                print(f"[Railway] measurements enum values: {vals}")
+                # Campos del tipo de retorno
+                ret = f.get("type", {})
+                while ret.get("ofType"):
+                    ret = ret["ofType"]
+                fields = [fld["name"] for fld in (ret.get("fields") or [])]
+                print(f"[Railway] estimatedUsage return fields: {fields}")
         return {"static": True}
     except Exception as e:
         print(f"[Error] Railway introspect: {e}")
