@@ -15,7 +15,7 @@ Response:
 
 Actions:
   respond — send response text to user
-  pause   — user opted out, pause automations in ManyChat
+  pause   — user opted out or is angry, pause automations in ManyChat
   skip    — no response needed (empty/unrecognized)
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ from typing import Generator
 
 import anthropic
 import requests as http_requests
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -38,31 +38,67 @@ from pydantic import BaseModel
 
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 DB_PATH           = os.environ.get("DB_PATH", "manychat/conversations.db")
-MAX_HISTORY       = 10   # number of past messages to include in context
-MAX_TOKENS        = 200  # Claude response limit
+MAX_HISTORY       = 20   # mensajes del historial que lee Claude
+MAX_TOKENS        = 220  # límite de respuesta de Claude
 
-SYSTEM_PROMPT = """Eres un asistente virtual de Dentista Latino, un servicio que conecta a personas de habla hispana en Estados Unidos con dentistas de confianza en su área.
+SYSTEM_PROMPT = """You are a virtual assistant for Dentista Latino, a service that connects Spanish-speaking people in the United States with trusted dentists in their area.
 
-Tu objetivo es conseguir que la persona llame a la clínica dental para ser atendida. Eres amable, empático y conciso.
+Your goal is to get the person to call so they can be attended by a dentist. You are warm, empathetic, and concise.
 
-Instrucciones:
-- Responde SIEMPRE en español, sin importar el idioma del usuario
-- Si el usuario no ha dado su código postal (zip code), pídelo amablemente
-- Sé breve: máximo 2-3 oraciones por respuesta
-- NUNCA inventes precios, direcciones, nombres de clínicas ni horarios específicos
-- Habla siempre en primera persona del plural como parte del equipo de Dentista Latino: usa "llámanos", "cuando nos llames", "nosotros te ayudamos", "cuéntanos", nunca en tercera persona como "llama a la clínica" o "ellos te dirán"
-- Cuando pregunten por precios, seguros, planes de pago, tratamientos, ubicación o cualquier detalle específico: reconoce su pregunta brevemente y diles que para esa información lo mejor es que nos llamen porque podemos darle toda la información exacta y personalizada
-- Siempre termina empujando a que llamen: usa frases como "lo mejor es que nos llames", "te recomiendo que nos llames", "cuando nos llames te explicamos todo"
-- El número o la forma de contacto se la darán en el siguiente paso del proceso, tú solo debes motivarlos a llamar
-- Si la persona ya fue atendida o no necesita ayuda, agradece y despídete
-- No repitas siempre la misma frase para empujar a llamar, varía el lenguaje para que se sienta natural"""
+LANGUAGE RULE (most important):
+- Always respond in the SAME language the user writes in.
+- If they write in Spanish → respond in Spanish.
+- If they write in English → respond in English.
+- If they mix languages → follow the dominant language of their message.
+
+Instructions:
+- Always speak in first person plural as part of the Dentista Latino team: use "call us", "when you call us", "we can help you", "llámanos", "cuando nos llames", "nosotros te ayudamos". Never say "call the clinic" or "they will tell you".
+- If the user has not given their zip code, ask for it warmly.
+- Keep responses brief: maximum 2-3 sentences.
+- NEVER invent prices, addresses, clinic names, or schedules.
+- When asked about prices, insurance, payment plans, treatments, location, or any specific detail: briefly acknowledge their question and tell them the best thing is to call us because we can give them exact and personalized information.
+- Always end by encouraging them to call: vary the phrasing naturally ("the best thing is to call us", "I recommend you give us a call", "when you call us we'll explain everything", "lo mejor es que nos llames", "te recomiendo que nos llames").
+- The contact number will be provided in the next step of the process — your role is only to motivate them to call.
+- READ THE CONVERSATION HISTORY carefully. If the user has previously mentioned a problem (no coverage in their area, called and no one answered, was told there are no clinics nearby), acknowledge that context with empathy before responding. Do not ignore what they have already shared.
+- If the user mentions there are no clinics in their area or no coverage: empathize, tell them you are looking for nearby options, and ask them to stay available while the team finds a solution.
+- If the person has already been attended or no longer needs help, thank them warmly and say goodbye.
+- Do not repeat the exact same closing phrase every time — vary it so it feels natural."""
+
+# ── Opt-out y detección de enojo ──────────────────────────────────────────────
+# Normalizados (sin tildes, minúsculas) — se comparan contra el texto normalizado del usuario
 
 OPT_OUT_PHRASES = [
+    # Atendido / ya no necesita
     "ya me atendi", "ya me atendieron", "ya me atendio", "ya fui atendido",
-    "ya encontre", "ya tengo dentista", "ya no necesito",
-    "no me interesa", "no quiero", "stop", "parar", "detener",
-    "baja", "borrar", "eliminar", "cancelar suscripcion",
-    "no molestes", "dejame", "gracias ya", "ya no",
+    "ya encontre dentista", "ya tengo dentista", "ya no necesito",
+    "ya fui al dentista", "ya me revisaron",
+    # Rechazo explícito
+    "no me interesa", "no quiero", "no necesito", "no gracias",
+    "stop", "parar", "detener", "unsubscribe",
+    "baja", "borrar", "eliminar", "cancelar suscripcion", "darme de baja",
+    "no me escribas", "no me escriban", "no me mandes", "no me manden",
+    "no me molestes", "no me molesten", "dejame en paz", "dejenme en paz",
+    "no me contactes", "no me contacten", "bloqueame", "te voy a bloquear",
+    # Enojo / acusaciones
+    "esto es una estafa", "son unos estafadores", "es una estafa",
+    "esto es fraude", "son unos fraudulentos", "es un fraude",
+    "son unos mentirosos", "esto es mentira", "son unos ladrones",
+    "voy a reportar", "los voy a reportar", "esto es spam", "es spam",
+    "no me jodan", "no me jodas",
+    # Groserías fuertes (normalizadas sin tilde)
+    "mierda", "puta madre", "puta mierda", "que mierda",
+    "hijueputa", "hijodeputa", "hijo de puta", "hp ",
+    "malparido", "malparida",
+    "verga", "a la verga", "vete a la verga",
+    "chinga tu madre", "chingada madre", "chinga tu",
+    "me cago en", "cagada",
+    "coño", "cono ",
+    "pendejo", "pendeja", "pendejos",
+    "cabron", "cabrona", "cabrones",
+    "imbecil", "estupido", "estupida", "idiota", "eres un idiota",
+    "marica", "marico", "maricon",
+    "gilipollas", "gilipolla",
+    "que se jodan", "jodan",
 ]
 
 ZIP_REGEX = re.compile(r'\b\d{5}\b')
@@ -100,7 +136,7 @@ def get_conn() -> Generator[sqlite3.Connection, None, None]:
 
 
 def get_history(subscriber_id: str) -> list[dict]:
-    """Return last MAX_HISTORY messages for this subscriber."""
+    """Return last MAX_HISTORY messages for this subscriber (chronological)."""
     with get_conn() as conn:
         rows = conn.execute(
             """
@@ -111,7 +147,6 @@ def get_history(subscriber_id: str) -> list[dict]:
             """,
             (subscriber_id, MAX_HISTORY),
         ).fetchall()
-    # reverse to chronological order
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
 
@@ -121,7 +156,6 @@ def save_message(subscriber_id: str, role: str, content: str) -> None:
             "INSERT INTO messages (subscriber_id, role, content) VALUES (?, ?, ?)",
             (subscriber_id, role, content),
         )
-        # prune old messages (keep last MAX_HISTORY * 2)
         conn.execute(
             """
             DELETE FROM messages WHERE subscriber_id = ? AND id NOT IN (
@@ -136,7 +170,7 @@ def save_message(subscriber_id: str, role: str, content: str) -> None:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def normalize_text(text: str) -> str:
-    """Strip accents and lowercase for comparison."""
+    """Strip accents and lowercase."""
     nfkd = unicodedata.normalize("NFKD", text)
     return "".join(c for c in nfkd if not unicodedata.combining(c)).lower()
 
@@ -152,7 +186,7 @@ def extract_zip(text: str) -> str | None:
 
 
 def resolve_zip(zip_code: str) -> str:
-    """Return 'City, State' for a US zip code, or the zip itself if lookup fails."""
+    """Return 'City, ST' for a US zip code, or the zip itself if lookup fails."""
     try:
         resp = http_requests.get(
             f"https://api.zippopotam.us/us/{zip_code}", timeout=5
@@ -190,32 +224,33 @@ async def chat(req: ChatRequest) -> JSONResponse:
     if not text:
         return JSONResponse({"response": "", "action": "skip"})
 
-    # ── Opt-out detection ──────────────────────────────────────────────────────
+    # ── Opt-out / enojo ───────────────────────────────────────────────────────
     if is_opt_out(text):
-        farewell = "Entendido, ¡gracias por comunicarte con Dentista Latino! Te deseamos lo mejor."
         save_message(req.subscriber_id, "user", text)
-        save_message(req.subscriber_id, "assistant", farewell)
-        return JSONResponse({"response": farewell, "action": "pause"})
+        return JSONResponse({"response": "", "action": "pause"})
 
-    # ── Build Claude context ───────────────────────────────────────────────────
+    # ── Contexto del usuario ──────────────────────────────────────────────────
     history = get_history(req.subscriber_id)
 
-    # Inject zip_code context if available
     zip_info = req.zip_code or extract_zip(text) or ""
-    context_note = ""
+    context_parts: list[str] = []
+
     if req.first_name:
-        context_note += f"El nombre del usuario es {req.first_name}. "
+        context_parts.append(f"The user's name is {req.first_name}.")
     if zip_info:
         location = resolve_zip(zip_info)
-        context_note += f"Su código postal es {zip_info} ({location}). Usa el nombre de la ciudad '{location}' al referirte al área, no el número del zip code. "
-
-    system = SYSTEM_PROMPT
-    if context_note:
-        system += f"\n\nContexto del usuario: {context_note}"
+        context_parts.append(
+            f"The user's zip code is {zip_info} ({location}). "
+            f"When referring to their area, use the city name '{location}', not the zip code number."
+        )
+    if context_parts:
+        system = SYSTEM_PROMPT + "\n\nUser context: " + " ".join(context_parts)
+    else:
+        system = SYSTEM_PROMPT
 
     messages = history + [{"role": "user", "content": text}]
 
-    # ── Call Claude ────────────────────────────────────────────────────────────
+    # ── Claude ────────────────────────────────────────────────────────────────
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     try:
         result = client.messages.create(
@@ -228,7 +263,7 @@ async def chat(req: ChatRequest) -> JSONResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Claude error: {type(e).__name__}")
 
-    # ── Save to history ────────────────────────────────────────────────────────
+    # ── Guardar historial ─────────────────────────────────────────────────────
     save_message(req.subscriber_id, "user", text)
     save_message(req.subscriber_id, "assistant", reply)
 
