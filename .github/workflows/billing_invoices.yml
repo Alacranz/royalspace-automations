@@ -1,16 +1,16 @@
 name: Billing — Facturas Mensuales
 
-# Corre el día 25 de cada mes a las 9:00 AM EST (= 14:00 UTC)
+# Corre el día 28 de cada mes a las 9:00 AM EST (= 14:00 UTC)
 # Crea y envía facturas a Rex Direct y Ray Advertising
 # con el revenue de Ringba del mes anterior.
-# Regla: factura del mes M se envía el día 25 del mes M+1
+# Regla: factura del mes M se envía el día 28 del mes M+1
 #        plazo de pago: 15 días desde la fecha de factura
 #
 # workflow_dispatch permite pruebas manuales en cualquier momento.
 
 on:
   schedule:
-    - cron: "0 14 25 * *"       # 9:00 AM EST, día 25 de cada mes
+    - cron: "0 14 28 * *"       # 9:00 AM EST, día 28 de cada mes
   workflow_dispatch:
     inputs:
       dry_run:
