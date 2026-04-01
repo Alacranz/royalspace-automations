@@ -13,7 +13,7 @@ import requests
 WEBHOOK_URL        = os.environ["DISCORD_WEBHOOK_MOD"]
 WEBHOOK_STATS_URL  = os.environ["WEBHOOK_STATS_URL"]        # https://...railway.app/stats
 RAILWAY_TOKEN      = os.environ.get("RAILWAY_TOKEN", "")
-ANTHROPIC_BALANCE  = float(os.environ.get("ANTHROPIC_BALANCE", "13.25"))  # balance inicial conocido
+ANTHROPIC_BALANCE  = float(os.environ.get("ANTHROPIC_BALANCE") or "13.25")
 
 # ── 1. Estadísticas del webhook ───────────────────────────────────────────────
 
