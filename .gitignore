@@ -18,3 +18,7 @@ Thumbs.db
 # Scripts PowerShell originales (no se suben al repo)
 AUTOMATIZACIONES/
 automatizacion/
+
+# ManyChat webhook — base de datos SQLite (generada en runtime)
+manychat/conversations.db
+manychat/*.db
