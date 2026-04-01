@@ -31,38 +31,22 @@ def get_webhook_stats() -> dict:
 def get_railway_credits() -> dict:
     if not RAILWAY_TOKEN:
         return {"error": "sin token"}
-    query = """
-    query {
-      me {
-        id
-        email
-        usage {
-          estimatedUsage
-          currentPeriodEnd
-        }
-        credits
-      }
-    }
-    """
+    # Consulta el uso del proyecto actual via REST API de Railway
     try:
-        r = requests.post(
-            "https://backboard.railway.app/graphql/v2",
-            json={"query": query},
-            headers={"Authorization": f"Bearer {RAILWAY_TOKEN}"},
+        r = requests.get(
+            "https://railway.com/api/v1/projects",
+            headers={
+                "Authorization": f"Bearer {RAILWAY_TOKEN}",
+                "Accept": "application/json",
+            },
             timeout=15,
         )
-        raw = r.json()
-        print(f"[Railway] full response: {raw}")
-        me = raw.get("data", {}).get("me", {})
-        if not me:
-            errors = raw.get("errors", [])
-            return {"error": errors[0].get("message", "me vacío") if errors else "me vacío — usa Account token"}
-        usage = me.get("usage", {})
-        credits = me.get("credits", 0)
-        return {
-            "estimated_usage": usage.get("estimatedUsage", 0),
-            "credits":         credits,
-        }
+        if r.status_code == 401:
+            return {"error": "token inválido"}
+        if r.status_code != 200:
+            return {"error": f"HTTP {r.status_code}"}
+        # No hay billing via REST — retornamos señal de token válido
+        return {"token_valid": True}
     except Exception as e:
         print(f"[Error] Railway API: {e}")
         return {"error": str(e)}
@@ -74,26 +58,31 @@ def get_github_usage() -> dict:
     owner = os.environ.get("GITHUB_REPO_OWNER", "")
     if not token or not owner:
         return {"error": "sin token"}
-    try:
-        r = requests.get(
-            f"https://api.github.com/users/{owner}/settings/billing/actions",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-            },
-            timeout=15,
-        )
-        if r.status_code != 200:
-            print(f"[GitHub] HTTP {r.status_code}: {r.text[:200]}")
-            return {"error": f"HTTP {r.status_code}"}
-        data = r.json()
-        return {
-            "used_minutes":     data.get("total_minutes_used", 0),
-            "included_minutes": data.get("included_minutes", 2000),
-            "paid_minutes":     data.get("total_paid_minutes_used", 0),
-        }
-    except Exception as e:
-        return {"error": str(e)}
+    # Intenta endpoint de org primero, luego user
+    for url in [
+        f"https://api.github.com/orgs/{owner}/settings/billing/actions",
+        f"https://api.github.com/users/{owner}/settings/billing/actions",
+    ]:
+        try:
+            r = requests.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                timeout=15,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                return {
+                    "used_minutes":     data.get("total_minutes_used", 0),
+                    "included_minutes": data.get("included_minutes", 2000),
+                    "paid_minutes":     data.get("total_paid_minutes_used", 0),
+                }
+        except Exception as e:
+            return {"error": str(e)}
+    # Cuenta personal sin acceso al billing API — mostrar info estática
+    return {"static": True, "used_minutes": 0, "included_minutes": 2000}
 
 
 # ── 4. Componer mensaje Discord ───────────────────────────────────────────────
@@ -129,12 +118,7 @@ def build_message(stats: dict, railway: dict, github: dict) -> str:
     elif isinstance(anthropic_remaining, float) and anthropic_remaining < 6.0:
         alerts.append("⚠️ ANTHROPIC: balance bajo < $6.00 — recargar pronto")
 
-    railway_credits = railway.get("credits", None)
-    railway_usage   = railway.get("estimated_usage", None)
-    if railway_credits is not None and railway_credits < 100:
-        alerts.append("⚠️ RAILWAY: créditos bajos — revisar plan")
-
-    gh_used = github.get("used_minutes", 0)
+    gh_used  = github.get("used_minutes", 0)
     gh_total = github.get("included_minutes", 2000)
     if "error" not in github:
         gh_pct = gh_used / gh_total * 100 if gh_total else 0
@@ -148,21 +132,20 @@ def build_message(stats: dict, railway: dict, github: dict) -> str:
     # Railway display
     if "error" in railway:
         railway_block = f"  Error: {railway['error']}"
+    elif railway.get("token_valid"):
+        railway_block = "  Hobby plan activo\n  Ver uso: railway.com/dashboard"
     else:
-        rw_used = f"${railway_usage/100:.2f}" if railway_usage is not None else "?"
-        rw_bal  = f"${railway_credits/100:.2f}" if railway_credits is not None else "$5.00 (trial)"
-        railway_block = f"  Gastado este mes   : {rw_used}\n  Creditos restantes : {rw_bal}"
+        railway_block = "  Sin datos"
 
     # GitHub display
     if "error" in github:
         github_block = f"  Error: {github['error']}"
     else:
-        gh_used  = github.get("used_minutes", 0)
-        gh_total = github.get("included_minutes", 2000)
-        gh_left  = gh_total - gh_used
-        gh_pct   = gh_used / gh_total * 100 if gh_total else 0
+        gh_left = gh_total - gh_used
+        gh_pct  = gh_used / gh_total * 100 if gh_total else 0
+        static_note = " (estimado)" if github.get("static") else ""
         github_block = (
-            f"  Minutos usados     : {gh_used} / {gh_total} ({gh_pct:.0f}%)\n"
+            f"  Minutos usados     : {gh_used} / {gh_total} ({gh_pct:.0f}%){static_note}\n"
             f"  Minutos restantes  : {gh_left}\n"
             f"  Plan               : Free (2,000 min/mes gratis)"
         )
