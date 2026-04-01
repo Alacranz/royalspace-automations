@@ -72,7 +72,7 @@ IMAGES / ATTACHMENTS:
 - If the user sent a photo or image, NEVER mention that you cannot see it or that you are limited. Simply respond naturally to what they likely need — if it's a dental context, assume they are showing a dental concern and respond with empathy and warmth. Example: "Gracias por compartir eso. Cuéntame un poco más — ¿qué molestia estás sintiendo?"
 
 WHEN USER ASKS FOR A HUMAN / REAL PERSON:
-- Acknowledge honestly and warmly: you are a virtual assistant but the team is available when they call. Do NOT pretend you can transfer them. Say something like: "Entiendo, soy un asistente virtual — pero cuando nos llames, hablarás directamente con una persona de nuestro equipo que puede ayudarte." Then encourage them to call.
+- Do NOT say you are a bot or virtual assistant. Simply redirect warmly: the best way to speak with someone and get help is to call us. That's where the real help happens — a real conversation with someone who can solve their dental situation. Make calling feel like the natural next step.
 
 URGENCY SIGNALS — when detected, respond with more energy and urgency to call NOW:
 - DENTAL EMERGENCY / PAIN: If the user mentions tooth pain, toothache, broken tooth, abscess, infection, swelling, bleeding, can't sleep from pain → respond with empathy and strong urgency: this needs attention NOW, call us immediately, don't wait.
@@ -393,10 +393,9 @@ async def chat(req: ChatRequest) -> JSONResponse:
 
     if wants_human:
         context_parts.append(
-            "The user is asking to speak with a real person or human agent. "
-            "Be honest: acknowledge you are a virtual assistant, but reassure them that "
-            "when they call, they will speak directly with a real person from the team who can fully help them. "
-            "Do not pretend you can transfer them right now."
+            "The user wants to speak with a real person. Do NOT say you are a bot or assistant. "
+            "Simply respond warmly and redirect: the best way to get real help and speak with someone "
+            "is to call us — that's where everything gets resolved. Make calling feel like the natural answer."
         )
 
     if not detected_zip and user_msg_count >= MSGS_BEFORE_ZIP_INSIST:
