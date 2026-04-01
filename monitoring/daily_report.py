@@ -32,24 +32,31 @@ def get_railway_credits() -> dict:
     if not RAILWAY_TOKEN:
         return {"error": "sin token"}
     headers = {"Authorization": f"Bearer {RAILWAY_TOKEN}"}
-    # Introspeccionar EstimatedUsage para encontrar el campo de valor monetario
-    introspect = """
+    query = """
     query {
-      __type(name: "EstimatedUsage") {
-        fields { name type { name kind } }
+      estimatedUsage(measurements: [CPU_USAGE, MEMORY_USAGE_GB, NETWORK_TX_GB, NETWORK_RX_GB]) {
+        projectId
+        measurement
+        estimatedValue
       }
     }
     """
     try:
         r = requests.post(
             "https://backboard.railway.app/graphql/v2",
-            json={"query": introspect},
+            json={"query": query},
             headers=headers,
             timeout=15,
         )
-        fields = r.json().get("data", {}).get("__type", {}).get("fields", [])
-        print(f"[Railway] EstimatedUsage fields: {[(f['name'], f['type']['name']) for f in fields]}")
-        return {"static": True}
+        raw = r.json()
+        errors = raw.get("errors", [])
+        if errors:
+            print(f"[Railway] error: {errors[0].get('message')}")
+            return {"static": True}
+        items = raw.get("data", {}).get("estimatedUsage", [])
+        total = sum(item.get("estimatedValue", 0) for item in items)
+        print(f"[Railway] estimatedValue total: {total} ({len(items)} items)")
+        return {"estimated_usd": total}
     except Exception as e:
         print(f"[Error] Railway: {e}")
         return {"static": True}
@@ -135,6 +142,19 @@ def build_message(stats: dict, railway: dict, github: dict) -> str:
     # Railway display
     if "error" in railway:
         railway_block = f"  Error: {railway['error']}"
+    elif "estimated_usd" in railway:
+        rw_est   = railway["estimated_usd"]
+        rw_free  = 5.00
+        rw_left  = max(0.0, rw_free - rw_est)
+        rw_pct   = rw_est / rw_free * 100 if rw_free else 0
+        railway_block = (
+            f"  Gastado este mes   : ${rw_est:.4f} ({rw_pct:.0f}% del free tier)\n"
+            f"  Credito restante   : ${rw_left:.2f} / $5.00"
+        )
+        if rw_pct >= 90:
+            alerts.append("🚨 RAILWAY: uso al límite del free tier ($5/mes)")
+        elif rw_pct >= 70:
+            alerts.append("⚠️ RAILWAY: uso al 70% del free tier ($5/mes)")
     else:
         railway_block = "  Hobby plan — ver uso: railway.com/dashboard"
 
