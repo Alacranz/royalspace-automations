@@ -32,31 +32,73 @@ def get_railway_credits() -> dict:
     if not RAILWAY_TOKEN:
         return {"error": "sin token"}
     headers = {"Authorization": f"Bearer {RAILWAY_TOKEN}"}
-    query = """
+    # Precios Railway Hobby (USD por unidad)
+    PRICES = {
+        "CPU_USAGE":        0.000463,   # por vCPU-minute
+        "MEMORY_USAGE_GB":  0.000231,   # por GB-minute
+        "NETWORK_TX_GB":    0.10,       # por GB egress
+        "NETWORK_RX_GB":    0.0,        # ingress gratis
+    }
+    # Paso 1: obtener el projectId del proyecto del webhook
+    query_projects = """
     query {
-      estimatedUsage(measurements: [CPU_USAGE, MEMORY_USAGE_GB, NETWORK_TX_GB, NETWORK_RX_GB]) {
-        projectId
-        measurement
-        estimatedValue
-      }
+      projects { nodes { id name } }
     }
     """
     try:
-        r = requests.post(
+        rp = requests.post(
             "https://backboard.railway.app/graphql/v2",
-            json={"query": query},
+            json={"query": query_projects},
             headers=headers,
             timeout=15,
         )
-        raw = r.json()
+        projects = rp.json().get("data", {}).get("projects", {}).get("nodes", [])
+        print(f"[Railway] projects: {[(p['name'], p['id']) for p in projects]}")
+
+        # Buscar el proyecto del webhook (nombre contiene "royalspace" o "manychat")
+        project_id = None
+        for p in projects:
+            name_lower = p.get("name", "").lower()
+            if any(k in name_lower for k in ["royalspace", "manychat", "webhook", "dental"]):
+                project_id = p["id"]
+                break
+        if not project_id and projects:
+            project_id = projects[0]["id"]  # usar el primero si no hay match
+        print(f"[Railway] using projectId: {project_id}")
+
+        # Paso 2: estimatedUsage por proyecto con precios reales
+        query_usage = f"""
+        query {{
+          estimatedUsage(
+            measurements: [CPU_USAGE, MEMORY_USAGE_GB, NETWORK_TX_GB, NETWORK_RX_GB]
+            projectId: "{project_id}"
+          ) {{
+            projectId
+            measurement
+            estimatedValue
+          }}
+        }}
+        """
+        ru = requests.post(
+            "https://backboard.railway.app/graphql/v2",
+            json={"query": query_usage},
+            headers=headers,
+            timeout=15,
+        )
+        raw = ru.json()
         errors = raw.get("errors", [])
         if errors:
             print(f"[Railway] error: {errors[0].get('message')}")
             return {"static": True}
+
         items = raw.get("data", {}).get("estimatedUsage", [])
-        total = sum(item.get("estimatedValue", 0) for item in items)
-        print(f"[Railway] estimatedValue total: {total} ({len(items)} items)")
-        return {"estimated_usd": total}
+        total_usd = sum(
+            item.get("estimatedValue", 0) * PRICES.get(item.get("measurement", ""), 0)
+            for item in items
+        )
+        print(f"[Railway] cost breakdown: { {i['measurement']: round(i['estimatedValue']*PRICES.get(i['measurement'],0),4) for i in items} }")
+        print(f"[Railway] total estimated USD: {total_usd:.4f}")
+        return {"estimated_usd": total_usd}
     except Exception as e:
         print(f"[Error] Railway: {e}")
         return {"static": True}
