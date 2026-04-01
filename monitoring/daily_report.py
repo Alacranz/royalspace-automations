@@ -32,61 +32,39 @@ def get_railway_credits() -> dict:
     if not RAILWAY_TOKEN:
         return {"error": "sin token"}
     headers = {"Authorization": f"Bearer {RAILWAY_TOKEN}"}
-
-    # Paso 1: encontrar el nombre del tipo del enum measurements y el tipo de retorno
-    introspect = """
+    # Probar estimatedUsage con valores comunes — el error revelará los válidos
+    query = """
     query {
-      __schema {
-        queryType {
-          fields {
-            name
-            args {
-              name
-              type { name kind ofType { name kind ofType { name kind } } }
-            }
-            type { name kind ofType { name kind fields { name type { name } } } }
-          }
-        }
-        types { name kind enumValues { name } }
+      estimatedUsage(measurements: [CPU_USAGE, MEMORY_USAGE, NETWORK_TX, NETWORK_RX]) {
+        projectId
+        serviceId
+        environmentId
+        measurement
+        value
+        startDate
+        endDate
       }
     }
     """
     try:
         r = requests.post(
             "https://backboard.railway.app/graphql/v2",
-            json={"query": introspect},
+            json={"query": query},
             headers=headers,
             timeout=15,
         )
-        data = r.json().get("data", {})
-        schema = data.get("__schema", {})
-        all_fields = schema.get("queryType", {}).get("fields", [])
-        all_types  = schema.get("types", [])
-
-        for f in all_fields:
-            if f["name"] == "estimatedUsage":
-                for arg in f.get("args", []):
-                    if arg["name"] == "measurements":
-                        # Navegar hasta el tipo base del elemento de lista
-                        t = arg["type"]
-                        while t.get("ofType"):
-                            t = t["ofType"]
-                        enum_name = t.get("name")
-                        print(f"[Railway] measurements enum type name: {enum_name}")
-                        # Buscar sus valores
-                        for typ in all_types:
-                            if typ["name"] == enum_name and typ["kind"] == "ENUM":
-                                vals = [v["name"] for v in (typ.get("enumValues") or [])]
-                                print(f"[Railway] measurements enum values: {vals}")
-                # Campos del tipo de retorno
-                ret = f.get("type", {})
-                while ret.get("ofType"):
-                    ret = ret["ofType"]
-                fields = [fld["name"] for fld in (ret.get("fields") or [])]
-                print(f"[Railway] estimatedUsage return fields: {fields}")
-        return {"static": True}
+        raw = r.json()
+        print(f"[Railway] estimatedUsage response: {raw}")
+        data = raw.get("data", {})
+        errors = raw.get("errors", [])
+        if errors:
+            return {"error": errors[0].get("message", "error desconocido")}
+        items = data.get("estimatedUsage", [])
+        total = sum(item.get("value", 0) for item in items)
+        print(f"[Railway] total usage value: {total}, items: {len(items)}")
+        return {"usage_value": total, "items": len(items)}
     except Exception as e:
-        print(f"[Error] Railway introspect: {e}")
+        print(f"[Error] Railway: {e}")
         return {"static": True}
 
 # ── 3. GitHub Actions usage ──────────────────────────────────────────────────
