@@ -29,8 +29,35 @@ def get_webhook_stats() -> dict:
 # ── 2. Créditos de Railway ────────────────────────────────────────────────────
 
 def get_railway_credits() -> dict:
-    # Railway Hobby plan no expone billing via API — datos estáticos
-    return {"static": True}
+    if not RAILWAY_TOKEN:
+        return {"error": "sin token"}
+    # Introspección para encontrar campos de billing disponibles
+    introspect = """
+    query {
+      __schema {
+        queryType {
+          fields { name }
+        }
+      }
+    }
+    """
+    headers = {"Authorization": f"Bearer {RAILWAY_TOKEN}"}
+    try:
+        r = requests.post(
+            "https://backboard.railway.app/graphql/v2",
+            json={"query": introspect},
+            headers=headers,
+            timeout=15,
+        )
+        fields = [f["name"] for f in r.json().get("data", {}).get("__schema", {}).get("queryType", {}).get("fields", [])]
+        print(f"[Railway] top-level queries: {fields}")
+        # Buscar campos relacionados con billing/usage
+        billing_fields = [f for f in fields if any(k in f.lower() for k in ["usage", "billing", "credit", "cost", "spend"])]
+        print(f"[Railway] billing-related: {billing_fields}")
+        return {"static": True, "fields": billing_fields}
+    except Exception as e:
+        print(f"[Error] Railway introspect: {e}")
+        return {"static": True}
 
 # ── 3. GitHub Actions usage ──────────────────────────────────────────────────
 
