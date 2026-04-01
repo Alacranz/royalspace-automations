@@ -32,37 +32,24 @@ def get_railway_credits() -> dict:
     if not RAILWAY_TOKEN:
         return {"error": "sin token"}
     headers = {"Authorization": f"Bearer {RAILWAY_TOKEN}"}
-    # Probar estimatedUsage con valores comunes — el error revelará los válidos
-    query = """
+    # Introspeccionar EstimatedUsage para encontrar el campo de valor monetario
+    introspect = """
     query {
-      estimatedUsage(measurements: [CPU_USAGE, MEMORY_USAGE, NETWORK_TX, NETWORK_RX]) {
-        projectId
-        serviceId
-        environmentId
-        measurement
-        value
-        startDate
-        endDate
+      __type(name: "EstimatedUsage") {
+        fields { name type { name kind } }
       }
     }
     """
     try:
         r = requests.post(
             "https://backboard.railway.app/graphql/v2",
-            json={"query": query},
+            json={"query": introspect},
             headers=headers,
             timeout=15,
         )
-        raw = r.json()
-        print(f"[Railway] estimatedUsage response: {raw}")
-        data = raw.get("data", {})
-        errors = raw.get("errors", [])
-        if errors:
-            return {"error": errors[0].get("message", "error desconocido")}
-        items = data.get("estimatedUsage", [])
-        total = sum(item.get("value", 0) for item in items)
-        print(f"[Railway] total usage value: {total}, items: {len(items)}")
-        return {"usage_value": total, "items": len(items)}
+        fields = r.json().get("data", {}).get("__type", {}).get("fields", [])
+        print(f"[Railway] EstimatedUsage fields: {[(f['name'], f['type']['name']) for f in fields]}")
+        return {"static": True}
     except Exception as e:
         print(f"[Error] Railway: {e}")
         return {"static": True}
