@@ -11,6 +11,8 @@
       "zoho_contact_name": "Rex Direct",
       "zoho_item_name": "Dental",
       "discord_name": "Rex Direct",
+      "billing_frequency": 1,
+      "due_days": 15,
       "send_invoice": false,
       "_send_invoice_note": "TEMPORAL: false hasta 28-abr. Cambiar a true antes del 28-may para factura de abril",
       "active": true
@@ -21,6 +23,8 @@
       "zoho_contact_name": "Ray Advertising LLC",
       "zoho_item_name": "Dental",
       "discord_name": "Ray Advertising",
+      "billing_frequency": 1,
+      "due_days": 15,
       "send_invoice": false,
       "_send_invoice_note": "TEMPORAL: false hasta 28-abr. Cambiar a true antes del 28-may para factura de abril",
       "active": true
@@ -31,6 +35,8 @@
       "zoho_contact_name": "Aragon Advertising",
       "zoho_item_name": "Dental",
       "discord_name": "Aragon Advertising",
+      "billing_frequency": 2,
+      "due_days": 15,
       "send_invoice": false,
       "active": true
     },
@@ -40,6 +46,8 @@
       "zoho_contact_name": "1800dentist",
       "zoho_item_name": "Dental",
       "discord_name": "1800Dentist",
+      "billing_frequency": 1,
+      "due_days": 30,
       "send_invoice": false,
       "active": true
     },
@@ -49,6 +57,8 @@
       "zoho_contact_name": "Unik Media Group",
       "zoho_item_name": "Dental",
       "discord_name": "UNIK",
+      "billing_frequency": 1,
+      "due_days": 30,
       "send_invoice": false,
       "active": true
     },
@@ -58,6 +68,8 @@
       "zoho_contact_name": "Marketcall Inc",
       "zoho_item_name": "Dental",
       "discord_name": "MarketCall",
+      "billing_frequency": 1,
+      "due_days": 15,
       "send_invoice": false,
       "active": true
     },
@@ -67,6 +79,8 @@
       "zoho_contact_name": "ClickDealer",
       "zoho_item_name": "Dental",
       "discord_name": "ClickDealer",
+      "billing_frequency": 1,
+      "due_days": 30,
       "send_invoice": false,
       "active": true
     }

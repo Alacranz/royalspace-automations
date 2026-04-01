@@ -27,7 +27,18 @@ SCOPES    = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-TAB_NAME  = "PAGOS 2026"
+TAB_NAME     = "PAGOS 2026"
+PENDING_TAB  = "BILLING_STATE"
+
+PENDING_HEADERS = [
+    "Buyer",
+    "Pending Revenue",
+    "From Month",       # YYYY-MM del mes más antiguo no facturado
+    "To Month",         # YYYY-MM del mes más reciente no facturado
+    "Months Accumulated",
+    "Last Invoice Month",  # YYYY-MM del último mes que fue incluido en una factura
+    "Last Updated",
+]
 
 HEADERS = [
     "Fecha Factura",
@@ -169,6 +180,95 @@ def refresh_statuses(spreadsheet_id: str, creds_json: str) -> int:
     else:
         print("  [Sheets] All invoices up to date")
     return updated
+
+
+def _open_pending_sheet(spreadsheet_id: str, creds_json: str):
+    creds = Credentials.from_service_account_info(
+        json.loads(creds_json), scopes=SCOPES
+    )
+    gc = gspread.authorize(creds)
+    spreadsheet = gc.open_by_key(spreadsheet_id)
+    try:
+        ws = spreadsheet.worksheet(PENDING_TAB)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title=PENDING_TAB, rows=100, cols=7)
+        ws.update("A1:G1", [PENDING_HEADERS])
+        ws.format("A1:G1", {"textFormat": {"bold": True}})
+    return ws
+
+
+def get_pending_state(spreadsheet_id: str, creds_json: str, buyer_name: str) -> dict:
+    """
+    Returns accumulated pending revenue state for a buyer.
+    {row, pending_revenue, from_month, to_month, months_accumulated, last_invoice_month}
+    """
+    ws = _open_pending_sheet(spreadsheet_id, creds_json)
+    all_values = ws.get_all_values()
+    for i, row in enumerate(all_values[1:], start=2):
+        if row and row[0] == buyer_name:
+            return {
+                "row":                i,
+                "pending_revenue":    float(row[1]) if len(row) > 1 and row[1] else 0.0,
+                "from_month":         row[2] if len(row) > 2 else "",
+                "to_month":           row[3] if len(row) > 3 else "",
+                "months_accumulated": int(row[4]) if len(row) > 4 and row[4] else 0,
+                "last_invoice_month": row[5] if len(row) > 5 else "",
+            }
+    return {
+        "row":                None,
+        "pending_revenue":    0.0,
+        "from_month":         "",
+        "to_month":           "",
+        "months_accumulated": 0,
+        "last_invoice_month": "",
+    }
+
+
+def set_pending_state(
+    spreadsheet_id: str,
+    creds_json: str,
+    buyer_name: str,
+    pending_revenue: float,
+    from_month: str,        # "YYYY-MM"
+    to_month: str,          # "YYYY-MM"
+    months_accumulated: int,
+    last_invoice_month: str = "",
+) -> None:
+    """Upserts the pending billing state for a buyer."""
+    ws = _open_pending_sheet(spreadsheet_id, creds_json)
+    all_values = ws.get_all_values()
+    now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    row_data = [
+        buyer_name,
+        round(pending_revenue, 2),
+        from_month,
+        to_month,
+        months_accumulated,
+        last_invoice_month,
+        now_str,
+    ]
+    for i, row in enumerate(all_values[1:], start=2):
+        if row and row[0] == buyer_name:
+            ws.update(f"A{i}:G{i}", [row_data])
+            return
+    ws.append_row(row_data, value_input_option="USER_ENTERED")
+
+
+def clear_pending_state(
+    spreadsheet_id: str,
+    creds_json: str,
+    buyer_name: str,
+    last_invoice_month: str,
+) -> None:
+    """Resets accumulated pending revenue to 0 after a successful invoice."""
+    set_pending_state(
+        spreadsheet_id, creds_json, buyer_name,
+        pending_revenue=0.0,
+        from_month="",
+        to_month="",
+        months_accumulated=0,
+        last_invoice_month=last_invoice_month,
+    )
 
 
 def get_outstanding_invoices(spreadsheet_id: str, creds_json: str) -> list[dict]:
