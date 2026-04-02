@@ -227,9 +227,11 @@ def run() -> None:
 
     diag_prompt = (
         "Eres el asistente ejecutivo de Royalspace. Con los datos de ayer, "
-        "redacta un diagnóstico ejecutivo breve en español: 2-3 oraciones concisas. "
-        "Señala lo más importante: si el profit fue bueno o bajo, algún MB a vigilar, "
-        "o alguna alerta de facturación. Sé directo, sin saludos ni cierre.\n\n"
+        "redacta un diagnóstico ejecutivo en español usando EXACTAMENTE este formato con 3 líneas separadas:\n\n"
+        "**Operación:** [1 oración sobre el profit total y eficiencia del día]\n\n"
+        "**Media Buyers:** [1 oración: quién lidera y quién requiere atención]\n\n"
+        "**Facturación:** [1 oración sobre el estado de facturas pendientes y vencidas]\n\n"
+        "Sé directo y concreto. Sin saludos, sin cierre, sin texto adicional fuera del formato.\n\n"
         + diag_input
     )
     diagnosis = _claude_diagnosis(diag_prompt)
