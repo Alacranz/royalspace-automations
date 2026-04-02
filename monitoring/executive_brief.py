@@ -222,7 +222,7 @@ def run() -> None:
         f"Buyers acumulando: {len(accumulating)} (${accum_total:,.2f} pendiente)\n"
     )
     if mc_stats:
-        total_convs = mc_stats.get("total_conversations", mc_stats.get("conversations", "?"))
+        total_convs = mc_stats.get("conversations_today", "?")
         diag_input += f"Conversaciones ManyChat ayer: {total_convs}\n"
 
     diag_prompt = (
@@ -270,7 +270,7 @@ def run() -> None:
     lines.append("")
 
     if mc_stats:
-        total_convs = mc_stats.get("total_conversations", mc_stats.get("conversations", "?"))
+        total_convs = mc_stats.get("conversations_today", "?")
         lines += [
             "── MANYCHAT ─────────────────────────────────────",
             f"  Conversaciones ayer : {total_convs}",
