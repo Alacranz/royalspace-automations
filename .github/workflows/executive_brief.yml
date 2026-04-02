@@ -1,0 +1,44 @@
+name: Executive Daily Brief
+
+# Corre a las 8:00 AM VET (= 12:00 UTC), lunes a sábado.
+# Genera un resumen ejecutivo del día anterior con diagnóstico de Claude Haiku
+# y lo envía a Discord #mod.
+#
+# workflow_dispatch permite ejecutarlo manualmente en cualquier momento.
+
+on:
+  schedule:
+    - cron: "0 12 * * 1-6"    # 8:00 AM VET (UTC-4), lunes–sábado
+  workflow_dispatch:
+
+jobs:
+  brief:
+    name: Generar brief ejecutivo
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: monitoring/requirements.txt
+
+      - name: Instalar dependencias
+        run: pip install -r monitoring/requirements.txt
+
+      - name: Generar brief ejecutivo
+        run: python monitoring/executive_brief.py
+        env:
+          RINGBA_API_TOKEN:            ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID:           ${{ secrets.RINGBA_ACCOUNT_ID }}
+          META_ACCESS_TOKEN:           ${{ secrets.META_ACCESS_TOKEN }}
+          META_API_VERSION:            ${{ vars.META_API_VERSION }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          BILLING_SPREADSHEET_ID:      ${{ secrets.BILLING_SPREADSHEET_ID }}
+          ANTHROPIC_API_KEY:           ${{ secrets.ANTHROPIC_API_KEY }}
+          DISCORD_WEBHOOK_MOD:         ${{ secrets.DISCORD_WEBHOOK_MOD }}
+          WEBHOOK_STATS_URL:           ${{ secrets.WEBHOOK_STATS_URL }}

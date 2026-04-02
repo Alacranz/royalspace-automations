@@ -1,0 +1,4 @@
+requests>=2.31
+pytz>=2024.1
+gspread>=6.0
+google-auth>=2.0
