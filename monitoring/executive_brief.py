@@ -43,7 +43,7 @@ from billing.payment_tracker import (                            # noqa: E402
 RINGBA_TOKEN     = os.environ["RINGBA_API_TOKEN"]
 RINGBA_ACCOUNT   = os.environ["RINGBA_ACCOUNT_ID"]
 META_TOKEN       = os.environ["META_ACCESS_TOKEN"]
-META_VERSION     = os.environ.get("META_API_VERSION", "v25.0")
+META_VERSION     = os.environ.get("META_API_VERSION") or "v25.0"
 GSHEETS_CREDS    = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
 SPREADSHEET_ID   = os.environ["BILLING_SPREADSHEET_ID"]
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
