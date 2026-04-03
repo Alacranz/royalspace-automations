@@ -26,7 +26,12 @@ def get_spend(
         "access_token": access_token,
     }
     resp = requests.get(url, params=params, timeout=30)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError:
+        raise requests.HTTPError(
+            f"Meta API error {resp.status_code} for account {account_id}"
+        ) from None
 
     data = resp.json().get("data") or []
     if data:
@@ -59,7 +64,12 @@ def get_spend_range(
         "access_token": access_token,
     }
     resp = requests.get(url, params=params, timeout=30)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError:
+        raise requests.HTTPError(
+            f"Meta API error {resp.status_code} for account {account_id} range {since}/{until}"
+        ) from None
     data = resp.json().get("data") or []
     if data:
         try:
@@ -105,7 +115,12 @@ def get_adset_insights(
 
     while url:
         resp = requests.get(url, params=params, timeout=30)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError:
+            raise requests.HTTPError(
+                f"Meta API error {resp.status_code} for account {account_id}"
+            ) from None
         data = resp.json()
 
         results.extend(data.get("data") or [])
