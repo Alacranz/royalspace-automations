@@ -1,0 +1,33 @@
+name: Profit — ZIP Code Report (Mensual)
+
+on:
+  schedule:
+    # Día 1 de cada mes, 9:00 AM EST (14:00 UTC)
+    - cron: "0 14 1 * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Modo (weekly/monthly)"
+        required: false
+        default: "monthly"
+
+jobs:
+  zip-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r profit/requirements.txt
+
+      - name: Run ZIP Monthly Report
+        env:
+          RINGBA_API_TOKEN:    ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID:   ${{ secrets.RINGBA_ACCOUNT_ID }}
+          DISCORD_WEBHOOK_ZIP: ${{ secrets.DISCORD_WEBHOOK_ZIP_MONTHLY }}
+          REPORT_MODE:         ${{ github.event.inputs.mode || 'monthly' }}
+        run: python profit/zip_report.py
