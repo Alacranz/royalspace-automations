@@ -1,0 +1,37 @@
+name: Profit — MB Performance Advisor
+
+on:
+  schedule:
+    # 7:00 PM EST (23:00 UTC) lunes a viernes
+    - cron: "0 23 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Forzar ejecución fuera de horario"
+        required: false
+        default: "false"
+
+jobs:
+  advisor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r profit/requirements.txt
+
+      - name: Run MB Performance Advisor
+        env:
+          RINGBA_API_TOKEN:          ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID:         ${{ secrets.RINGBA_ACCOUNT_ID }}
+          META_ACCESS_TOKEN:         ${{ secrets.META_ACCESS_TOKEN }}
+          META_API_VERSION:          ${{ vars.META_API_VERSION }}
+          ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
+          DISCORD_WEBHOOK_MOD:       ${{ secrets.DISCORD_WEBHOOK_MOD }}
+          DISCORD_WEBHOOK_MB_INTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_INTERNAL }}
+          DISCORD_WEBHOOK_MB_EXTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_EXTERNAL }}
+        run: python profit/mb_advisor.py

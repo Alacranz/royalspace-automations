@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+"""
+MB Performance Advisor — Royalspace 2026
+
+Corre al final del día laboral (7 PM EST, L-V).
+Por cada MB activo:
+  1. Datos de hoy (Ringba + Meta): spend, profit, calls, CVR
+  2. Tendencia de los últimos 7 días
+  3. Adsets de Meta con CPR alto y bajo
+  4. Claude Haiku genera recomendaciones accionables en español
+  5. Envía @mención al MB en Discord con el análisis
+
+Mensajes:
+  - Internos → DISCORD_WEBHOOK_MB_INTERNAL
+  - Externos  → DISCORD_WEBHOOK_MB_EXTERNAL
+  - Resumen   → DISCORD_WEBHOOK_MOD
+
+Secrets requeridos:
+  RINGBA_API_TOKEN, RINGBA_ACCOUNT_ID
+  META_ACCESS_TOKEN, META_API_VERSION
+  ANTHROPIC_API_KEY
+  DISCORD_WEBHOOK_MOD, DISCORD_WEBHOOK_MB_INTERNAL, DISCORD_WEBHOOK_MB_EXTERNAL
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import requests
+
+sys.path.insert(0, os.path.dirname(__file__))
+from common.business_hours import is_business_hours
+from common.discord_client import send as discord_send
+from common.meta_client import build_spend_map, get_adset_insights
+from common.ringba_client import (
+    get_midnight_utc,
+    get_publisher_summary,
+    normalize_name,
+)
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+
+RINGBA_TOKEN     = os.environ["RINGBA_API_TOKEN"]
+RINGBA_ACCOUNT   = os.environ["RINGBA_ACCOUNT_ID"]
+META_TOKEN       = os.environ["META_ACCESS_TOKEN"]
+META_VERSION     = os.environ.get("META_API_VERSION") or "v25.0"
+ANTHROPIC_KEY    = os.environ["ANTHROPIC_API_KEY"]
+WEBHOOK_MOD      = os.environ["DISCORD_WEBHOOK_MOD"]
+WEBHOOK_INTERNAL = os.environ["DISCORD_WEBHOOK_MB_INTERNAL"]
+WEBHOOK_EXTERNAL = os.environ["DISCORD_WEBHOOK_MB_EXTERNAL"]
+
+CONFIG_PATH = Path(__file__).parent / "config.json"
+TZ_NAME     = "America/New_York"
+
+
+def fmt(v: float) -> str:
+    return f"${v:.2f}"
+
+
+def mb_status(mb_profit: float) -> str:
+    if mb_profit <= -10:
+        return "CRITICAL"
+    if mb_profit < 0:
+        return "NEGATIVE"
+    if mb_profit < 11:
+        return "LOW"
+    return "PROFITABLE"
+
+
+def trend_arrow(today: float, avg_7d: float) -> str:
+    if avg_7d == 0:
+        return "→"
+    pct = ((today - avg_7d) / abs(avg_7d)) * 100
+    if pct > 10:
+        return f"↑ +{pct:.0f}%"
+    if pct < -10:
+        return f"↓ {pct:.0f}%"
+    return f"→ {pct:+.0f}%"
+
+
+# ── Claude Haiku ──────────────────────────────────────────────────────────────
+
+def generate_advice(mb_name: str, context: dict) -> str:
+    """
+    Llama a Claude Haiku para generar recomendaciones accionables.
+    context incluye: today, trend_7d, best_adsets, worst_adsets, status
+    """
+    prompt = f"""Eres el advisor de performance de Royalspace, una empresa de marketing dental pay-per-call.
+Analiza los datos del media buyer {mb_name} y da 2-3 recomendaciones muy específicas y accionables para HOY.
+
+Datos de hoy:
+- Spend: {context['spend_today']}
+- Profit MB: {context['profit_today']} ({context['status']})
+- Llamadas: {context['calls']} | Conectadas: {context['connected']} | CVR: {context['cvr']:.1%}
+- Tendencia vs promedio 7 días: {context['trend']}
+
+Peores adsets (CPR alto, gastan presupuesto sin resultados):
+{context['worst_adsets']}
+
+Mejores adsets (CPR bajo, eficientes):
+{context['best_adsets']}
+
+Da recomendaciones concretas: qué pausar, qué escalar, qué ajustar en el targeting o budget.
+Sé directo, específico y breve. Máximo 3 frases. En español."""
+
+    headers = {
+        "x-api-key":         ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type":      "application/json",
+    }
+    body = {
+        "model":      "claude-haiku-4-5-20251001",
+        "max_tokens": 200,
+        "messages":   [{"role": "user", "content": prompt}],
+    }
+    resp = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers=headers,
+        json=body,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["content"][0]["text"].strip()
+
+
+# ── Adset analysis ────────────────────────────────────────────────────────────
+
+def analyze_adsets(adsets: list[dict], min_spend: float = 5.0) -> tuple[str, str]:
+    """
+    Retorna (worst_str, best_str) con los adsets más y menos eficientes.
+    Filtra adsets con spend < min_spend para evitar ruido.
+    """
+    filtered = []
+    for a in adsets:
+        try:
+            spend = float(a.get("spend") or 0)
+            cpr_raw = a.get("cost_per_result")
+            if not cpr_raw:
+                continue
+            # cost_per_result puede ser lista o dict con "value"
+            if isinstance(cpr_raw, list):
+                cpr = float(cpr_raw[0].get("value", 0)) if cpr_raw else 0
+            elif isinstance(cpr_raw, dict):
+                cpr = float(cpr_raw.get("value", 0))
+            else:
+                cpr = float(cpr_raw)
+            if spend >= min_spend and cpr > 0:
+                filtered.append({
+                    "name":  a.get("ad_name") or a.get("adset_name") or "Unknown",
+                    "spend": spend,
+                    "cpr":   cpr,
+                })
+        except (ValueError, TypeError):
+            continue
+
+    if not filtered:
+        return "Sin datos suficientes", "Sin datos suficientes"
+
+    sorted_by_cpr = sorted(filtered, key=lambda x: x["cpr"])
+    best  = sorted_by_cpr[:3]
+    worst = sorted_by_cpr[-3:][::-1]
+
+    def fmt_adsets(items):
+        lines = []
+        for a in items:
+            name = a["name"][:35]
+            lines.append(f"  • {name} — CPR {fmt(a['cpr'])} (spend {fmt(a['spend'])})")
+        return "\n".join(lines) if lines else "  • Sin datos"
+
+    return fmt_adsets(worst), fmt_adsets(best)
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    with open(CONFIG_PATH, encoding="utf-8") as f:
+        config = json.load(f)
+
+    now_utc   = datetime.now(timezone.utc)
+    today_start = get_midnight_utc(TZ_NAME)
+
+    # ── 7-day range ───────────────────────────────────────────────────────────
+    week_start = today_start - timedelta(days=7)
+
+    print("Consultando Ringba (hoy)...")
+    ringba_today = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, today_start, now_utc)
+
+    print("Consultando Ringba (7 días)...")
+    ringba_week = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, week_start, today_start)
+
+    print("Consultando Meta spend (hoy)...")
+    spend_map = build_spend_map(META_TOKEN, META_VERSION, config, "today", include_private_groups=False)
+
+    # ── Process each MB ───────────────────────────────────────────────────────
+    internal_msgs: list[str] = []
+    external_msgs: list[str] = []
+    summary_rows: list[str]  = []
+
+    for mb in config.get("media_buyers") or []:
+        if not mb.get("active"):
+            continue
+
+        name      = mb["display_name"]
+        key       = normalize_name(str(mb.get("publisher_name") or ""))
+        ad_id     = str(mb.get("facebook_ad_account_id") or "")
+        user_id   = mb.get("discord_user_id", "")
+        category  = str(mb.get("category") or "").lower()
+        mb_share  = float(mb.get("media_buyer_spend_share", 0.5))
+
+        # Today data
+        rd_today   = ringba_today.get(key) or {}
+        spend      = spend_map.get(ad_id, 0.0)
+        payout     = rd_today.get("payout", 0.0)
+        calls      = rd_today.get("calls", 0)
+        connected  = rd_today.get("connected", 0)
+        conversions = rd_today.get("conversions", 0)
+        cvr        = conversions / connected if connected > 0 else 0.0
+        mb_profit  = payout - (spend * mb_share)
+        status     = mb_status(mb_profit)
+
+        # Skip inactive MBs (no spend AND no calls today)
+        if spend == 0 and calls == 0:
+            print(f"  [{name}] Sin actividad hoy — omitiendo")
+            continue
+
+        # 7-day average
+        rd_week      = ringba_week.get(key) or {}
+        payout_7d    = rd_week.get("payout", 0.0)
+        avg_profit_7d = (payout_7d - 0) / 7  # simplified: no spend data per day
+        trend        = trend_arrow(mb_profit, avg_profit_7d / 7 if avg_profit_7d else mb_profit)
+
+        # Adset insights
+        print(f"  [{name}] Consultando adsets Meta...")
+        try:
+            adsets = get_adset_insights(META_TOKEN, META_VERSION, ad_id, "today")
+            worst_str, best_str = analyze_adsets(adsets)
+        except Exception as e:
+            print(f"  [{name}] Error adsets: {e}")
+            worst_str, best_str = "No disponible", "No disponible"
+
+        # Claude advice
+        print(f"  [{name}] Generando recomendaciones con Claude...")
+        try:
+            advice = generate_advice(name, {
+                "spend_today":  fmt(spend),
+                "profit_today": fmt(mb_profit),
+                "status":       status,
+                "calls":        calls,
+                "connected":    connected,
+                "cvr":          cvr,
+                "trend":        trend,
+                "worst_adsets": worst_str,
+                "best_adsets":  best_str,
+            })
+        except Exception as e:
+            print(f"  [{name}] Error Claude: {e}")
+            advice = "No se pudo generar análisis automático."
+
+        # Build Discord message
+        status_emoji = {"PROFITABLE": "🟢", "LOW": "🟡", "NEGATIVE": "🔴", "CRITICAL": "🚨"}.get(status, "⚪")
+        mention = f"<@{user_id}>" if user_id else f"**{name}**"
+
+        msg_lines = [
+            f"{mention} — **Análisis del día**",
+            "```",
+            f"Spend:   {fmt(spend):>10}   Profit MB: {fmt(mb_profit):>10}  {status_emoji} {status}",
+            f"Llamadas:{calls:>5}   Conectadas:{connected:>5}   CVR: {cvr:.1%}",
+            f"Tendencia 7d: {trend}",
+            "```",
+            f"**🔴 Adsets a revisar/pausar:**",
+            f"```\n{worst_str}\n```",
+            f"**🟢 Adsets a escalar:**",
+            f"```\n{best_str}\n```",
+            f"**💡 Recomendación:**",
+            f"> {advice}",
+        ]
+        msg = "\n".join(msg_lines)
+        if len(msg) > 1900:
+            msg = msg[:1900] + "\n..."
+
+        if category == "internal":
+            internal_msgs.append(msg)
+        else:
+            external_msgs.append(msg)
+
+        summary_rows.append(
+            f"{'✅' if status == 'PROFITABLE' else '⚠️' if status == 'LOW' else '❌'} "
+            f"{name:<20} {fmt(spend):>8} → {fmt(mb_profit):>8} ({status})"
+        )
+
+        print(f"  [{name}] ✓ {status} | Spend: {fmt(spend)} | Profit: {fmt(mb_profit)}")
+
+    # ── Send Discord messages ─────────────────────────────────────────────────
+    if internal_msgs:
+        header = "**📊 MB PERFORMANCE ADVISOR — Análisis del día**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        discord_send(WEBHOOK_INTERNAL, header)
+        for msg in internal_msgs:
+            discord_send(WEBHOOK_INTERNAL, msg)
+
+    if external_msgs:
+        header = "**📊 MB PERFORMANCE ADVISOR — Análisis del día**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        discord_send(WEBHOOK_EXTERNAL, header)
+        for msg in external_msgs:
+            discord_send(WEBHOOK_EXTERNAL, msg)
+
+    # Summary to MOD
+    if summary_rows:
+        now_et = datetime.now(timezone.utc) - timedelta(hours=4)
+        summary = "```\nMB ADVISOR SUMMARY — " + now_et.strftime("%d/%m/%Y %I:%M %p ET") + "\n"
+        summary += "━" * 50 + "\n"
+        summary += "\n".join(summary_rows)
+        summary += "\n```"
+        discord_send(WEBHOOK_MOD, summary)
+
+    print(f"\nAdvisor completado: {len(internal_msgs)} internos, {len(external_msgs)} externos.")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        try:
+            discord_send(WEBHOOK_MOD, f"[MB ADVISOR ERROR] {exc}")
+        except Exception:
+            pass
+        sys.exit(1)
