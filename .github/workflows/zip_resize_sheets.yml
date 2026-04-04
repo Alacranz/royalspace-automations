@@ -1,0 +1,23 @@
+name: Profit — ZIP Resize Sheets (una sola corrida)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  resize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install gspread google-auth
+
+      - name: Resize sheets
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          ZIP_SPREADSHEET_ID:          ${{ secrets.ZIP_SPREADSHEET_ID }}
+        run: python profit/zip_resize_sheets.py
