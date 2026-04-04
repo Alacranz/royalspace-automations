@@ -18,9 +18,9 @@ RINGBA_TOKEN   = os.environ["RINGBA_API_TOKEN"]
 RINGBA_ACCOUNT = os.environ["RINGBA_ACCOUNT_ID"]
 
 def main():
-    # Últimas 24 horas
-    end_utc   = datetime.now(timezone.utc)
-    start_utc = end_utc - timedelta(days=3)
+    # Abril 3 2026 (rango completo del día)
+    start_utc = datetime(2026, 4, 3, 0, 0, 0, tzinfo=timezone.utc)
+    end_utc   = datetime(2026, 4, 4, 0, 0, 0, tzinfo=timezone.utc)
 
     url = f"https://api.ringba.com/v2/{RINGBA_ACCOUNT}/calllogs"
     headers = {
@@ -31,7 +31,7 @@ def main():
     body = {
         "reportStart": start_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "reportEnd":   end_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "size":        5,
+        "size":        1000,
         "offset":      0,
     }
 
@@ -42,12 +42,23 @@ def main():
 
     records = (data.get("report") or {}).get("records") or []
     if not records:
-        print("No se encontraron registros en los últimos 3 días.")
+        print("No se encontraron registros.")
         return
 
-    # Tomar el primer registro convertido si hay
-    converted = [r for r in records if r.get("hasConverted") is True]
-    record = converted[0] if converted else records[0]
+    # Buscar los caller IDs específicos
+    target_ids = {"+15626443102", "+15595480476"}
+    target_records = [r for r in records if r.get("callerId") in target_ids or r.get("inboundCallId") in target_ids or str(r.get("callerNumber","")) in target_ids]
+
+    print(f"\nTotal registros: {len(records)}")
+    print(f"Registros con caller IDs objetivo: {len(target_records)}")
+
+    to_inspect = target_records if target_records else records[:2]
+
+    for i, record in enumerate(to_inspect):
+        caller = record.get("callerId") or record.get("callerNumber") or record.get("inboundCallId", "?")
+        print(f"\n{'='*60}")
+        print(f"REGISTRO {i+1} — Caller: {caller}")
+        print('='*60)
 
     print(f"\nTotal registros obtenidos: {len(records)}")
     print(f"Registros convertidos: {len(converted)}")
@@ -67,82 +78,27 @@ def main():
         elif isinstance(obj, list) and obj:
             print_fields(obj[0], f"{prefix}[0]")
 
-    print_fields(record)
+        print_fields(record)
 
-    # Buscar específicamente campos con "zip" en el nombre
-    print(f"\n{'='*60}")
-    print("CAMPOS QUE CONTIENEN 'zip' (case-insensitive):")
-    print('='*60)
+        def find_fields(obj, keyword, prefix=""):
+            results = []
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    full_key = f"{prefix}.{k}" if prefix else k
+                    if keyword in k.lower():
+                        results.append((full_key, v))
+                    if isinstance(v, (dict, list)):
+                        results.extend(find_fields(v, keyword, full_key))
+            elif isinstance(obj, list) and obj:
+                results.extend(find_fields(obj[0], keyword, f"{prefix}[0]"))
+            return results
 
-    def find_zip_fields(obj, prefix=""):
-        results = []
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                full_key = f"{prefix}.{k}" if prefix else k
-                if "zip" in k.lower():
-                    results.append((full_key, v))
-                if isinstance(v, (dict, list)):
-                    results.extend(find_zip_fields(v, full_key))
-        elif isinstance(obj, list) and obj:
-            results.extend(find_zip_fields(obj[0], f"{prefix}[0]"))
-        return results
-
-    zip_fields = find_zip_fields(record)
-    if zip_fields:
-        for k, v in zip_fields:
-            print(f"  {k}: {repr(v)}")
-    else:
-        print("  Ningún campo con 'zip' encontrado en este registro.")
-
-    # Buscar campos con "geo"
-    print(f"\n{'='*60}")
-    print("CAMPOS QUE CONTIENEN 'geo' (case-insensitive):")
-    print('='*60)
-
-    def find_geo_fields(obj, prefix=""):
-        results = []
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                full_key = f"{prefix}.{k}" if prefix else k
-                if "geo" in k.lower():
-                    results.append((full_key, v))
-                if isinstance(v, (dict, list)):
-                    results.extend(find_geo_fields(v, full_key))
-        elif isinstance(obj, list) and obj:
-            results.extend(find_geo_fields(obj[0], f"{prefix}[0]"))
-        return results
-
-    geo_fields = find_geo_fields(record)
-    if geo_fields:
-        for k, v in geo_fields:
-            print(f"  {k}: {repr(v)}")
-    else:
-        print("  Ningún campo con 'geo' encontrado.")
-
-    # Buscar campos con "gather"
-    print(f"\n{'='*60}")
-    print("CAMPOS QUE CONTIENEN 'gather' (case-insensitive):")
-    print('='*60)
-
-    def find_gather_fields(obj, prefix=""):
-        results = []
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                full_key = f"{prefix}.{k}" if prefix else k
-                if "gather" in k.lower():
-                    results.append((full_key, v))
-                if isinstance(v, (dict, list)):
-                    results.extend(find_gather_fields(v, full_key))
-        elif isinstance(obj, list) and obj:
-            results.extend(find_gather_fields(obj[0], f"{prefix}[0]"))
-        return results
-
-    gather_fields = find_gather_fields(record)
-    if gather_fields:
-        for k, v in gather_fields:
-            print(f"  {k}: {repr(v)}")
-    else:
-        print("  Ningún campo con 'gather' encontrado.")
+        for keyword in ["zip", "geo", "gather", "city", "state", "caller"]:
+            fields = find_fields(record, keyword)
+            if fields:
+                print(f"\n  -- '{keyword}' fields --")
+                for k, v in fields:
+                    print(f"    {k}: {repr(v)}")
 
 if __name__ == "__main__":
     main()
