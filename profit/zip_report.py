@@ -36,7 +36,6 @@ WEBHOOK        = os.environ["DISCORD_WEBHOOK_ZIP"]
 
 TZ_NAME   = "America/New_York"
 PAGE_SIZE = 1000
-TOP_N     = 20
 
 VALUE_COLUMNS = [
     "publisherName",
@@ -183,37 +182,72 @@ def monthly_range() -> tuple[datetime, datetime, str]:
 # ── Format ────────────────────────────────────────────────────────────────────
 
 def _rank_by_revenue(zip_map: dict) -> list:
-    """Ordena por revenue desc. Desempate: conversiones desc."""
+    """Ordena por revenue desc. Desempate: conversiones desc. Retorna TODOS."""
     return sorted(
         zip_map.items(),
         key=lambda x: (x[1]["revenue"], x[1]["conversions"]),
         reverse=True,
-    )[:TOP_N]
+    )
 
 
-def format_report(zip_map: dict, label: str, period_label: str) -> str:
+def build_messages(zip_map: dict, label: str, period_label: str) -> list[str]:
+    """
+    Genera lista de mensajes Discord (máx 1900 chars cada uno)
+    con todos los zip codes. El primero incluye el header.
+    """
     ranked = _rank_by_revenue(zip_map)
     if not ranked:
-        return f"**📍 ZIP CODE REPORT — {period_label}**\n{label}\nSin datos de zip codes."
+        return [f"**📍 ZIP CODE REPORT — {period_label}**\n{label}\nSin datos de zip codes."]
 
-    print(f"  Resolviendo ciudad/estado para {len(ranked)} zips...")
+    total = len(ranked)
+    print(f"  Resolviendo ciudad/estado para {total} zips...")
     rows = []
     for zip_code, _ in ranked:
         location = zip_location(zip_code)
         rows.append((zip_code, location))
-        time.sleep(0.05)  # evitar rate limit
+        time.sleep(0.05)  # evitar rate limit de zippopotam.us
 
-    lines = [
-        f"**📍 ZIP CODE REPORT — {period_label}**",
-        f"Período: {label}",
+    # Construir líneas de datos
+    data_lines = []
+    for i, (zip_code, location) in enumerate(rows, 1):
+        data_lines.append(f"  {i:>4}  {zip_code:<7}  {location}")
+
+    # Paginar en mensajes de máx 1900 chars
+    messages = []
+    HEADER_FIRST = (
+        f"**📍 ZIP CODE REPORT — {period_label}**\n"
+        f"Período: {label} · {total} zips\n"
+    )
+    COLS_HEADER = [
         "```",
-        f"  {'#':>2}  {'Zip':<7}  Ubicación",
+        f"  {'#':>4}  {'Zip':<7}  Ubicación",
         "  " + "─" * 38,
     ]
-    for i, (zip_code, location) in enumerate(rows, 1):
-        lines.append(f"  {i:>2}  {zip_code:<7}  {location}")
-    lines.append("```")
-    return "\n".join(lines)
+    FOOTER = "```"
+
+    is_first = True
+    current_lines: list[str] = []
+    current_prefix = HEADER_FIRST if is_first else ""
+
+    for line in data_lines:
+        # Calcular tamaño del bloque actual si agregamos esta línea
+        block = current_prefix + "\n".join(COLS_HEADER + current_lines + [line] + [FOOTER])
+        if len(block) > 1900 and current_lines:
+            # Cerrar bloque actual y enviarlo
+            msg = current_prefix + "\n".join(COLS_HEADER + current_lines + [FOOTER])
+            messages.append(msg)
+            # Siguiente bloque: sin header principal
+            current_prefix = ""
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+
+    # Último bloque
+    if current_lines:
+        msg = current_prefix + "\n".join(COLS_HEADER + current_lines + [FOOTER])
+        messages.append(msg)
+
+    return messages
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -247,12 +281,14 @@ def main() -> None:
     total_rev  = sum(d["revenue"] for d in zip_map.values())
     print(f"  Zips únicos: {total_zips} | Revenue total: ${total_rev:.2f}")
 
-    msg = format_report(zip_map, label, period_label)
-    if len(msg) > 1900:
-        msg = msg[:1900] + "\n..."
+    messages = build_messages(zip_map, label, period_label)
+    print(f"  Mensajes Discord a enviar: {len(messages)}")
 
     print("Enviando a Discord...")
-    discord_send(WEBHOOK, msg)
+    for i, msg in enumerate(messages, 1):
+        discord_send(WEBHOOK, msg)
+        if i < len(messages):
+            time.sleep(0.5)  # evitar rate limit Discord
     print("✓ Completado.")
 
 
