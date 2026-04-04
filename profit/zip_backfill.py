@@ -10,7 +10,7 @@ Por cada mes especificado en BACKFILL_MONTHS:
 
 Env vars requeridas:
   RINGBA_API_TOKEN, RINGBA_ACCOUNT_ID
-  DISCORD_WEBHOOK_ZIP
+  DISCORD_WEBHOOK_MB_INTERNAL
   GOOGLE_SERVICE_ACCOUNT_JSON
   ZIP_SPREADSHEET_ID
 """
@@ -33,7 +33,7 @@ from common.discord_client import send as discord_send
 
 RINGBA_TOKEN   = os.environ["RINGBA_API_TOKEN"]
 RINGBA_ACCOUNT = os.environ["RINGBA_ACCOUNT_ID"]
-WEBHOOK        = os.environ["DISCORD_WEBHOOK_ZIP"]
+WEBHOOK        = os.environ["DISCORD_WEBHOOK_MB_INTERNAL"]
 SA_JSON        = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
 SPREADSHEET_ID = os.environ["ZIP_SPREADSHEET_ID"]
 
