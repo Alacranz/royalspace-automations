@@ -507,8 +507,14 @@ async def billing_debug(token: str = "") -> JSONResponse:
     if creds_json and spreadsheet_id:
         try:
             import json as _json
-            import gspread
-            from google.oauth2.service_account import Credentials
+            try:
+                import gspread
+                from google.oauth2.service_account import Credentials
+            except ImportError:
+                import subprocess, sys
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "gspread", "google-auth"], stdout=subprocess.DEVNULL)
+                import gspread
+                from google.oauth2.service_account import Credentials
             _scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
             _creds  = Credentials.from_service_account_info(_json.loads(creds_json), scopes=_scopes)
             _gc     = gspread.authorize(_creds)
@@ -543,8 +549,14 @@ async def billing_dashboard(token: str = "") -> object:
     if creds_json and spreadsheet_id:
         try:
             import json as _json
-            import gspread
-            from google.oauth2.service_account import Credentials
+            try:
+                import gspread
+                from google.oauth2.service_account import Credentials
+            except ImportError:
+                import subprocess, sys
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "gspread", "google-auth"], stdout=subprocess.DEVNULL)
+                import gspread
+                from google.oauth2.service_account import Credentials
 
             _scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
             _creds  = Credentials.from_service_account_info(_json.loads(creds_json), scopes=_scopes)
