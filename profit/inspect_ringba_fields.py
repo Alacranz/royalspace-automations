@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script de diagnóstico — imprime JSON crudo de los dos caller IDs objetivo.
+Script de diagnóstico — probar cómo obtener tags (Gather:Zipcode, Geo:Zip Code) de Ringba.
 """
 from __future__ import annotations
 
@@ -13,66 +13,109 @@ import requests
 RINGBA_TOKEN   = os.environ["RINGBA_API_TOKEN"]
 RINGBA_ACCOUNT = os.environ["RINGBA_ACCOUNT_ID"]
 
-# Los dos inboundCallIds encontrados anteriormente
-TARGET_CALL_IDS = {
-    "RGB23C90E8115B985F7FEF1541F04C3E109A572B859V3VKG01",  # +15595480476 Gather:Zipcode
-    "RGB333DDC65D53D706B35221764BF8381063F987012V3K3601",  # +15595480476
-    "RGB700B8DDB98119AAA363832A2496EFA7074E30007V3WSC01",  # +15595480476
-}
+# inboundCallId de una llamada que sabemos tiene Gather:Zipcode = 93703
+KNOWN_CALL_ID_GATHER = "RGB23C90E8115B985F7FEF1541F04C3E109A572B859V3VKG01"
 
-TARGET_PHONES = {"15626443102", "15595480476"}
-
-
-def main():
-    start_utc = datetime(2026, 4, 3, 0, 0, 0, tzinfo=timezone.utc)
-    end_utc   = datetime(2026, 4, 4, 0, 0, 0, tzinfo=timezone.utc)
-
+def post_calllogs(body):
     url = f"https://api.ringba.com/v2/{RINGBA_ACCOUNT}/calllogs"
     headers = {
         "Authorization": f"Token {RINGBA_TOKEN}",
         "Accept":        "application/json",
         "Content-Type":  "application/json",
     }
+    resp = requests.post(url, headers=headers, json=body, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
 
-    # Request con size grande para obtener todos los registros del día
-    body = {
+def get_record_fields(data):
+    records = (data.get("report") or {}).get("records") or []
+    if not records:
+        return None, []
+    return records[0], list(records[0].keys())
+
+def main():
+    start_utc = datetime(2026, 4, 3, 0, 0, 0, tzinfo=timezone.utc)
+    end_utc   = datetime(2026, 4, 4, 0, 0, 0, tzinfo=timezone.utc)
+    base = {
         "reportStart": start_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "reportEnd":   end_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "size":        1000,
+        "size":        5,
         "offset":      0,
     }
 
-    print("Consultando Ringba...")
-    resp = requests.post(url, headers=headers, json=body, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
-    records = (data.get("report") or {}).get("records") or []
-    print(f"Total registros: {len(records)}")
+    # TEST 1: tags como lista de strings
+    print("=== TEST 1: body con 'tags' como lista ===")
+    try:
+        data = post_calllogs({**base, "tags": ["Gather:Zipcode", "Geo:Zip Code", "Geo:ZipCode"]})
+        r, keys = get_record_fields(data)
+        print(f"Keys: {keys}")
+        if r:
+            zip_fields = {k: v for k, v in r.items() if any(z in k.lower() for z in ["zip", "geo", "gather", "tag"])}
+            print(f"Zip/geo/gather/tag fields: {zip_fields or 'NINGUNO'}")
+    except Exception as e:
+        print(f"Error: {e}")
 
-    # Buscar por inboundPhoneNumber o inboundCallId
-    found = []
-    for r in records:
-        phone = str(r.get("inboundPhoneNumber") or "").replace("+", "")
-        call_id = str(r.get("inboundCallId") or "")
-        if phone in TARGET_PHONES or call_id in TARGET_CALL_IDS:
-            found.append(r)
+    # TEST 2: tagNames como lista
+    print("\n=== TEST 2: body con 'tagNames' ===")
+    try:
+        data = post_calllogs({**base, "tagNames": ["Gather:Zipcode", "Geo:Zip Code"]})
+        r, keys = get_record_fields(data)
+        new_keys = [k for k in keys if "zip" in k.lower() or "geo" in k.lower() or "gather" in k.lower() or "tag" in k.lower()]
+        print(f"Nuevos campos: {new_keys or 'NINGUNO'}")
+    except Exception as e:
+        print(f"Error: {e}")
 
-    print(f"Registros objetivo encontrados: {len(found)}")
+    # TEST 3: includeTags con nombres específicos
+    print("\n=== TEST 3: 'includeTags' con lista de nombres ===")
+    try:
+        data = post_calllogs({**base, "includeTags": ["Gather:Zipcode", "Geo:Zip Code"]})
+        r, keys = get_record_fields(data)
+        new_keys = [k for k in keys if "zip" in k.lower() or "gather" in k.lower()]
+        print(f"Nuevos campos: {new_keys or 'NINGUNO'}")
+    except Exception as e:
+        print(f"Error: {e}")
 
-    for i, r in enumerate(found):
-        print(f"\n{'='*70}")
-        print(f"REGISTRO {i+1} — Phone: {r.get('inboundPhoneNumber')} | Converted: {r.get('hasConverted')}")
-        print(f"{'='*70}")
-        # Print raw JSON completo
-        print(json.dumps(r, indent=2))
+    # TEST 4: Endpoint específico por call ID
+    print("\n=== TEST 4: GET /calllogs/{callId} ===")
+    for path in [
+        f"https://api.ringba.com/v2/{RINGBA_ACCOUNT}/calllogs/{KNOWN_CALL_ID_GATHER}",
+        f"https://api.ringba.com/v2/{RINGBA_ACCOUNT}/calls/{KNOWN_CALL_ID_GATHER}",
+        f"https://api.ringba.com/v2/{RINGBA_ACCOUNT}/calls/{KNOWN_CALL_ID_GATHER}/tags",
+        f"https://api.ringba.com/v2/{RINGBA_ACCOUNT}/calllogs/{KNOWN_CALL_ID_GATHER}/tags",
+    ]:
+        headers = {"Authorization": f"Token {RINGBA_TOKEN}", "Accept": "application/json"}
+        resp = requests.get(path, headers=headers, timeout=30)
+        print(f"  {path.split(RINGBA_ACCOUNT)[1]} → {resp.status_code}")
+        if resp.status_code == 200:
+            d = resp.json()
+            print(f"  Response: {json.dumps(d)[:500]}")
 
-    # También imprimir el primer registro convertido cualquiera para ver estructura
-    converted = [r for r in records if r.get("hasConverted") is True and r not in found]
-    if converted:
-        print(f"\n{'='*70}")
-        print("PRIMER CONVERTIDO ADICIONAL (estructura completa):")
-        print(f"{'='*70}")
-        print(json.dumps(converted[0], indent=2))
+    # TEST 5: POST con "reportColumns" incluyendo tag names
+    print("\n=== TEST 5: 'reportColumns' con tag names ===")
+    try:
+        data = post_calllogs({**base, "reportColumns": [
+            "inboundCallId", "publisherName", "hasConverted", "conversionAmount",
+            "Gather:Zipcode", "Geo:Zip Code", "Geo:City", "Geo:State"
+        ]})
+        r, keys = get_record_fields(data)
+        print(f"Keys: {keys}")
+        zip_fields = {k: v for k, v in (r or {}).items() if any(z in k.lower() for z in ["zip", "geo", "gather"])}
+        print(f"Zip fields: {zip_fields or 'NINGUNO'}")
+    except Exception as e:
+        print(f"Error: {e}")
+
+    # TEST 6: Endpoint /tags del account
+    print("\n=== TEST 6: GET /tags del account ===")
+    for path in [
+        f"https://api.ringba.com/v2/{RINGBA_ACCOUNT}/tags",
+        f"https://api.ringba.com/v2/{RINGBA_ACCOUNT}/calllogs/columns",
+        f"https://api.ringba.com/v2/{RINGBA_ACCOUNT}/reports/columns",
+    ]:
+        headers = {"Authorization": f"Token {RINGBA_TOKEN}", "Accept": "application/json"}
+        resp = requests.get(path, headers=headers, timeout=30)
+        print(f"  {path.split(RINGBA_ACCOUNT)[1]} → {resp.status_code}")
+        if resp.status_code == 200:
+            print(f"  Response: {json.dumps(resp.json())[:500]}")
 
 
 if __name__ == "__main__":
