@@ -83,11 +83,15 @@ def write_to_sheet(rows: list[tuple[str, str, str]], tab_name: str) -> None:
     sheet = get_sheet(tab_name)
     data  = [["Zipcode", "City", "State"]]
     for zip_code, city, state in rows:
-        data.append([zip_code, city, state])
+        try:
+            zip_val = int(zip_code)
+        except (ValueError, TypeError):
+            zip_val = zip_code
+        data.append([zip_val, city, state])
     sheet.clear()
-    sheet.format("A:A", {"numberFormat": {"type": "TEXT"}})
     sheet.update(range_name="A1", values=data, value_input_option="RAW")
     sheet.resize(rows=len(data), cols=3)
+    sheet.format("A2:A{}".format(len(data)), {"numberFormat": {"type": "NUMBER", "pattern": "00000"}})
     sheet.set_basic_filter()
     print(f"  Escrito en hoja '{tab_name}': {len(rows)} zips")
 

@@ -32,9 +32,9 @@ def main():
             all_values = sheet.get_all_values()
             actual_rows = len(all_values)
             sheet.resize(rows=actual_rows, cols=3)
-            sheet.format("A:A", {"numberFormat": {"type": "TEXT"}})
+            sheet.format("A2:A{}".format(actual_rows), {"numberFormat": {"type": "NUMBER", "pattern": "00000"}})
             sheet.set_basic_filter()
-            print(f"  ✅ '{tab_name}' → {actual_rows} filas + texto plano + filtro")
+            print(f"  ✅ '{tab_name}' → {actual_rows} filas + formato 00000 + filtro")
         except gspread.WorksheetNotFound:
             print(f"  ⚠️  '{tab_name}' no encontrada — omitida")
         except Exception as e:
