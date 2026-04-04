@@ -5,11 +5,6 @@ on:
     # Lunes 9:00 AM EST (14:00 UTC) — reporte de la semana anterior
     - cron: "0 14 * * 1"
   workflow_dispatch:
-    inputs:
-      mode:
-        description: "Modo (weekly/monthly)"
-        required: false
-        default: "weekly"
 
 jobs:
   zip-report:
@@ -26,8 +21,9 @@ jobs:
 
       - name: Run ZIP Weekly Report
         env:
-          RINGBA_API_TOKEN:    ${{ secrets.RINGBA_API_TOKEN }}
-          RINGBA_ACCOUNT_ID:   ${{ secrets.RINGBA_ACCOUNT_ID }}
-          DISCORD_WEBHOOK_ZIP: ${{ secrets.DISCORD_WEBHOOK_ZIP_WEEKLY }}
-          REPORT_MODE:         ${{ github.event.inputs.mode || 'weekly' }}
+          RINGBA_API_TOKEN:            ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID:           ${{ secrets.RINGBA_ACCOUNT_ID }}
+          DISCORD_WEBHOOK_ZIP_INTERNAL: ${{ secrets.DISCORD_WEBHOOK_ZIP_INTERNAL }}
+          DISCORD_WEBHOOK_ZIP_EXTERNAL: ${{ secrets.DISCORD_WEBHOOK_ZIP_EXTERNAL }}
+          REPORT_MODE: weekly
         run: python profit/zip_report.py
