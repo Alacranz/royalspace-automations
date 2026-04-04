@@ -1,24 +1,65 @@
 #!/usr/bin/env python3
 """
-Script de diagnóstico — inspecciona los campos disponibles en un call log de Ringba.
-Corre una vez manualmente para descubrir los nombres exactos de campos de zip code.
-
-Uso: python profit/inspect_ringba_fields.py
+Script de diagnóstico — inspecciona campos de zip code en Ringba call logs.
 """
 from __future__ import annotations
 
-import json
 import os
-import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import requests
 
 RINGBA_TOKEN   = os.environ["RINGBA_API_TOKEN"]
 RINGBA_ACCOUNT = os.environ["RINGBA_ACCOUNT_ID"]
 
+TARGET_PHONES = {"+15626443102", "+15595480476", "15626443102", "15595480476"}
+
+
+def find_fields(obj, keyword, prefix=""):
+    results = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            full_key = f"{prefix}.{k}" if prefix else k
+            if keyword in k.lower():
+                results.append((full_key, v))
+            if isinstance(v, (dict, list)):
+                results.extend(find_fields(v, keyword, full_key))
+    elif isinstance(obj, list) and obj:
+        results.extend(find_fields(obj[0], keyword, f"{prefix}[0]"))
+    return results
+
+
+def print_all_fields(obj, prefix="", indent=2):
+    pad = " " * indent
+    if isinstance(obj, dict):
+        for k, v in sorted(obj.items()):
+            full_key = f"{prefix}.{k}" if prefix else k
+            if isinstance(v, dict) and v:
+                print(f"{pad}{full_key}:")
+                print_all_fields(v, full_key, indent + 2)
+            elif isinstance(v, list) and v:
+                print(f"{pad}{full_key}: [{len(v)} items]")
+                if isinstance(v[0], dict):
+                    print_all_fields(v[0], f"{full_key}[0]", indent + 2)
+            else:
+                print(f"{pad}{full_key}: {repr(v)}")
+
+
+def matches_target(record):
+    """Check all string fields for target phone numbers."""
+    def search(obj):
+        if isinstance(obj, str):
+            clean = obj.replace("+", "").replace("-", "").replace(" ", "")
+            return any(t.replace("+", "") in clean for t in TARGET_PHONES)
+        if isinstance(obj, dict):
+            return any(search(v) for v in obj.values())
+        if isinstance(obj, list):
+            return any(search(i) for i in obj)
+        return False
+    return search(record)
+
+
 def main():
-    # Abril 3 2026 (rango completo del día)
     start_utc = datetime(2026, 4, 3, 0, 0, 0, tzinfo=timezone.utc)
     end_utc   = datetime(2026, 4, 4, 0, 0, 0, tzinfo=timezone.utc)
 
@@ -35,70 +76,53 @@ def main():
         "offset":      0,
     }
 
-    print("Consultando Ringba...")
+    print("Consultando Ringba (04/03/2026)...")
     resp = requests.post(url, headers=headers, json=body, timeout=60)
     resp.raise_for_status()
     data = resp.json()
 
     records = (data.get("report") or {}).get("records") or []
-    if not records:
-        print("No se encontraron registros.")
-        return
+    print(f"Total registros: {len(records)}")
 
-    # Buscar los caller IDs específicos
-    target_ids = {"+15626443102", "+15595480476"}
-    target_records = [r for r in records if r.get("callerId") in target_ids or r.get("inboundCallId") in target_ids or str(r.get("callerNumber","")) in target_ids]
+    # Search for target phone numbers in all fields
+    target_records = [r for r in records if matches_target(r)]
+    print(f"Registros con números objetivo: {len(target_records)}")
 
-    print(f"\nTotal registros: {len(records)}")
-    print(f"Registros con caller IDs objetivo: {len(target_records)}")
-
-    to_inspect = target_records if target_records else records[:2]
-
-    for i, record in enumerate(to_inspect):
-        caller = record.get("callerId") or record.get("callerNumber") or record.get("inboundCallId", "?")
-        print(f"\n{'='*60}")
-        print(f"REGISTRO {i+1} — Caller: {caller}")
-        print('='*60)
-
-    print(f"\nTotal registros obtenidos: {len(records)}")
-    print(f"Registros convertidos: {len(converted)}")
+    # Print all fields of first record to see structure
     print(f"\n{'='*60}")
-    print("TODOS LOS CAMPOS DEL PRIMER REGISTRO:")
+    print("ESTRUCTURA COMPLETA — PRIMER REGISTRO:")
     print('='*60)
+    if records:
+        print_all_fields(records[0])
 
-    def print_fields(obj, prefix=""):
-        if isinstance(obj, dict):
-            for k, v in sorted(obj.items()):
-                full_key = f"{prefix}.{k}" if prefix else k
-                if isinstance(v, (dict, list)) and v:
-                    print(f"  {full_key}:")
-                    print_fields(v, full_key)
-                else:
-                    print(f"  {full_key}: {repr(v)}")
-        elif isinstance(obj, list) and obj:
-            print_fields(obj[0], f"{prefix}[0]")
+    # Print target records if found
+    if target_records:
+        for i, record in enumerate(target_records):
+            print(f"\n{'='*60}")
+            print(f"REGISTRO OBJETIVO {i+1}:")
+            print('='*60)
+            print_all_fields(record)
 
-        print_fields(record)
+            print(f"\n  -- Campos relevantes --")
+            for kw in ["zip", "geo", "gather", "city", "state", "caller", "convert", "revenue"]:
+                fields = find_fields(record, kw)
+                if fields:
+                    print(f"  [{kw}]")
+                    for k, v in fields:
+                        print(f"    {k}: {repr(v)}")
+    else:
+        print("\nNingún registro encontró los números objetivo.")
+        print("Mostrando campos zip/geo/gather del primer registro convertido:")
+        converted = [r for r in records if r.get("hasConverted") is True]
+        sample = converted[0] if converted else (records[0] if records else None)
+        if sample:
+            for kw in ["zip", "geo", "gather", "city", "state"]:
+                fields = find_fields(sample, kw)
+                if fields:
+                    print(f"\n  [{kw}]")
+                    for k, v in fields:
+                        print(f"    {k}: {repr(v)}")
 
-        def find_fields(obj, keyword, prefix=""):
-            results = []
-            if isinstance(obj, dict):
-                for k, v in obj.items():
-                    full_key = f"{prefix}.{k}" if prefix else k
-                    if keyword in k.lower():
-                        results.append((full_key, v))
-                    if isinstance(v, (dict, list)):
-                        results.extend(find_fields(v, keyword, full_key))
-            elif isinstance(obj, list) and obj:
-                results.extend(find_fields(obj[0], keyword, f"{prefix}[0]"))
-            return results
-
-        for keyword in ["zip", "geo", "gather", "city", "state", "caller"]:
-            fields = find_fields(record, keyword)
-            if fields:
-                print(f"\n  -- '{keyword}' fields --")
-                for k, v in fields:
-                    print(f"    {k}: {repr(v)}")
 
 if __name__ == "__main__":
     main()
