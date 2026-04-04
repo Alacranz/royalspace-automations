@@ -488,6 +488,163 @@ async def stats() -> JSONResponse:
     })
 
 
+@app.get("/billing")
+async def billing_dashboard(token: str = "") -> object:
+    """
+    Billing Dashboard — reads DASHBOARD_* tabs from Google Sheets.
+    Protected by BILLING_DASHBOARD_TOKEN env var.
+    """
+    from fastapi.responses import HTMLResponse
+
+    expected = os.environ.get("BILLING_DASHBOARD_TOKEN", "")
+    if expected and token != expected:
+        return HTMLResponse("<h1>401 Unauthorized</h1>", status_code=401)
+
+    creds_json      = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    spreadsheet_id  = os.environ.get("BILLING_SPREADSHEET_ID", "")
+
+    summary_rows: list[list] = []
+    buyers_rows:  list[list] = []
+    invoice_rows: list[list] = []
+
+    if creds_json and spreadsheet_id:
+        try:
+            import json as _json
+            import gspread
+            from google.oauth2.service_account import Credentials
+
+            _scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+            _creds  = Credentials.from_service_account_info(_json.loads(creds_json), scopes=_scopes)
+            _gc     = gspread.authorize(_creds)
+            _ss     = _gc.open_by_key(spreadsheet_id)
+
+            def _read_tab(name):
+                try:
+                    return _ss.worksheet(name).get_all_values()
+                except Exception:
+                    return []
+
+            summary_rows = _read_tab("DASHBOARD_SUMMARY")
+            buyers_rows  = _read_tab("DASHBOARD_BUYERS")
+            invoice_rows = _read_tab("DASHBOARD_INVOICES")
+        except Exception as e:
+            summary_rows = [["Error", str(e), ""]]
+
+    def _kv(rows, key):
+        for r in rows[1:]:
+            if r and r[0] == key:
+                return r[1] if len(r) > 1 else ""
+        return "$0.00"
+
+    facturado  = _kv(summary_rows, "Total Facturado 2026")
+    cobrado    = _kv(summary_rows, "Total Cobrado")
+    pendiente  = _kv(summary_rows, "Total Pendiente")
+    vencido    = _kv(summary_rows, "Total Vencido")
+    x_facturar = _kv(summary_rows, "Revenue por Facturar")
+    updated_at = summary_rows[1][2] if len(summary_rows) > 1 and len(summary_rows[1]) > 2 else ""
+
+    def _table(rows):
+        if not rows:
+            return "<p class='text-gray-500 text-sm'>Sin datos</p>"
+        html = "<table class='w-full text-sm'>"
+        html += "<thead><tr>"
+        for h in rows[0]:
+            html += f"<th class='text-left px-3 py-2 text-gray-400 font-semibold border-b border-gray-700'>{h}</th>"
+        html += "</tr></thead><tbody>"
+        for row in rows[1:]:
+            estado = row[6].strip().upper() if len(row) > 6 else ""
+            if estado == "VENCIDO":
+                bg = "bg-red-900/30"
+            elif estado == "PENDIENTE":
+                bg = "bg-yellow-900/20"
+            else:
+                bg = "hover:bg-gray-800/50"
+            html += f"<tr class='{bg} transition-colors'>"
+            for i, cell in enumerate(row):
+                align = "text-right" if cell.startswith("$") else "text-left"
+                html += f"<td class='px-3 py-2 {align} border-b border-gray-800/50'>{cell}</td>"
+            html += "</tr>"
+        html += "</tbody></table>"
+        return html
+
+    buyers_table  = _table(buyers_rows)
+    invoice_table = _table(invoice_rows)
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Royalspace — Billing Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body {{ background: #0f0f1a; color: #e2e8f0; font-family: 'Inter', sans-serif; }}
+  .card {{ background: #1a1a2e; border: 1px solid #2d2d4e; border-radius: 12px; }}
+  .kpi-val {{ font-size: 1.8rem; font-weight: 700; }}
+</style>
+</head>
+<body class="min-h-screen p-6">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <h1 class="text-2xl font-bold text-white">Royalspace <span class="text-indigo-400">/ Billing</span></h1>
+      <p class="text-gray-500 text-sm mt-1">Dashboard de facturación en tiempo real</p>
+    </div>
+    <div class="text-right">
+      <p class="text-gray-500 text-xs">Actualizado</p>
+      <p class="text-gray-300 text-sm font-medium">{updated_at}</p>
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+    <div class="card p-4">
+      <p class="text-gray-400 text-xs mb-1">Total Facturado</p>
+      <p class="kpi-val text-white">{facturado}</p>
+    </div>
+    <div class="card p-4">
+      <p class="text-gray-400 text-xs mb-1">Cobrado</p>
+      <p class="kpi-val text-green-400">{cobrado}</p>
+    </div>
+    <div class="card p-4">
+      <p class="text-gray-400 text-xs mb-1">Pendiente</p>
+      <p class="kpi-val text-yellow-400">{pendiente}</p>
+    </div>
+    <div class="card p-4">
+      <p class="text-gray-400 text-xs mb-1">Vencido</p>
+      <p class="kpi-val text-red-400">{vencido}</p>
+    </div>
+    <div class="card p-4">
+      <p class="text-gray-400 text-xs mb-1">Por Facturar</p>
+      <p class="kpi-val text-indigo-400">{x_facturar}</p>
+    </div>
+  </div>
+
+  <!-- Buyers Table -->
+  <div class="card p-5 mb-6">
+    <h2 class="text-white font-semibold mb-4">Resumen por Buyer</h2>
+    <div class="overflow-x-auto">
+      {buyers_table}
+    </div>
+  </div>
+
+  <!-- Active Invoices -->
+  <div class="card p-5">
+    <h2 class="text-white font-semibold mb-4">Facturas Activas
+      <span class="text-xs text-gray-500 font-normal ml-2">(PENDIENTE + VENCIDO)</span>
+    </h2>
+    <div class="overflow-x-auto">
+      {invoice_table}
+    </div>
+  </div>
+
+</body>
+</html>"""
+
+    return HTMLResponse(html)
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
