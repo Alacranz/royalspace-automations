@@ -488,6 +488,39 @@ async def stats() -> JSONResponse:
     })
 
 
+@app.get("/billing-debug")
+async def billing_debug(token: str = "") -> JSONResponse:
+    """Temporary debug endpoint."""
+    expected = os.environ.get("BILLING_DASHBOARD_TOKEN", "")
+    if expected and token != expected:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    creds_json     = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    spreadsheet_id = os.environ.get("BILLING_SPREADSHEET_ID", "")
+    result = {
+        "has_creds":  bool(creds_json),
+        "creds_len":  len(creds_json),
+        "has_sheet":  bool(spreadsheet_id),
+        "sheet_id":   spreadsheet_id[:20] + "..." if spreadsheet_id else "",
+        "error":      None,
+        "rows_read":  0,
+    }
+    if creds_json and spreadsheet_id:
+        try:
+            import json as _json
+            import gspread
+            from google.oauth2.service_account import Credentials
+            _scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+            _creds  = Credentials.from_service_account_info(_json.loads(creds_json), scopes=_scopes)
+            _gc     = gspread.authorize(_creds)
+            _ss     = _gc.open_by_key(spreadsheet_id)
+            rows    = _ss.worksheet("DASHBOARD_SUMMARY").get_all_values()
+            result["rows_read"] = len(rows)
+            result["first_rows"] = rows[:3]
+        except Exception as e:
+            result["error"] = str(e)
+    return JSONResponse(result)
+
+
 @app.get("/billing")
 async def billing_dashboard(token: str = "") -> object:
     """
