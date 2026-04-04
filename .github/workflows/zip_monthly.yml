@@ -2,7 +2,7 @@ name: Profit — ZIP Code Report (Mensual)
 
 on:
   schedule:
-    # Día 1 de cada mes, 9:00 AM EST (14:00 UTC)
+    # Día 1 de cada mes, 9:00 AM EST (14:00 UTC) — cierra mes anterior
     - cron: "0 14 1 * *"
   workflow_dispatch:
 
@@ -21,8 +21,10 @@ jobs:
 
       - name: Run ZIP Monthly Report
         env:
-          RINGBA_API_TOKEN:    ${{ secrets.RINGBA_API_TOKEN }}
-          RINGBA_ACCOUNT_ID:   ${{ secrets.RINGBA_ACCOUNT_ID }}
-          DISCORD_WEBHOOK_ZIP: ${{ secrets.DISCORD_WEBHOOK_ZIP }}
+          RINGBA_API_TOKEN:          ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID:         ${{ secrets.RINGBA_ACCOUNT_ID }}
+          DISCORD_WEBHOOK_ZIP:       ${{ secrets.DISCORD_WEBHOOK_ZIP }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          ZIP_SPREADSHEET_ID:        ${{ secrets.ZIP_SPREADSHEET_ID }}
           REPORT_MODE: monthly
         run: python profit/zip_report.py

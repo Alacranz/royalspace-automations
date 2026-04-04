@@ -2,40 +2,54 @@
 """
 ZIP Code Report — Royalspace 2026
 
-Genera un ranking de zip codes por revenue para el canal de Discord.
 Dos modos:
-  --weekly  : semana anterior (lun–dom)
-  --monthly : mes anterior completo
+  weekly  : fetch desde el inicio del mes actual hasta ahora
+            → sobreescribe hoja del mes actual en Google Sheets
+  monthly : fetch del mes anterior completo
+            → sobreescribe hoja del mes anterior en Google Sheets
 
-Formato: # | Zip | Ciudad, Estado
-Ordenado por revenue descendente, sin mostrar cantidades.
-Ciudad y estado obtenidos de zippopotam.us (gratuito, sin API key).
+Formato Google Sheet: Zipcode | City | State
+Ordenado por revenue descendente. Sin mostrar revenue, llamadas ni conversiones.
+Ciudad/Estado via api.zippopotam.us (gratuito, sin key).
 
 Env vars requeridas:
   RINGBA_API_TOKEN, RINGBA_ACCOUNT_ID
   DISCORD_WEBHOOK_ZIP
+  GOOGLE_SERVICE_ACCOUNT_JSON
+  ZIP_SPREADSHEET_ID
   REPORT_MODE = "weekly" | "monthly"
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
+import gspread
 import pytz
 import requests
+from google.oauth2.service_account import Credentials
 
 sys.path.insert(0, os.path.dirname(__file__))
 from common.discord_client import send as discord_send
 
-RINGBA_TOKEN   = os.environ["RINGBA_API_TOKEN"]
-RINGBA_ACCOUNT = os.environ["RINGBA_ACCOUNT_ID"]
-WEBHOOK        = os.environ["DISCORD_WEBHOOK_ZIP"]
+RINGBA_TOKEN    = os.environ["RINGBA_API_TOKEN"]
+RINGBA_ACCOUNT  = os.environ["RINGBA_ACCOUNT_ID"]
+WEBHOOK         = os.environ["DISCORD_WEBHOOK_ZIP"]
+SA_JSON         = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+SPREADSHEET_ID  = os.environ["ZIP_SPREADSHEET_ID"]
 
 TZ_NAME   = "America/New_York"
 PAGE_SIZE = 1000
+
+MONTHS_ES = {
+    1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr",
+    5: "May", 6: "Jun", 7: "Jul", 8: "Ago",
+    9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic",
+}
 
 VALUE_COLUMNS = [
     "publisherName",
@@ -46,17 +60,52 @@ VALUE_COLUMNS = [
 ]
 
 
+# ── Google Sheets ─────────────────────────────────────────────────────────────
+
+def get_sheet(tab_name: str):
+    """Abre o crea la hoja con el nombre dado."""
+    creds = Credentials.from_service_account_info(
+        json.loads(SA_JSON),
+        scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    )
+    gc = gspread.authorize(creds)
+    spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+
+    # Buscar tab existente o crear nuevo
+    try:
+        sheet = spreadsheet.worksheet(tab_name)
+    except gspread.WorksheetNotFound:
+        sheet = spreadsheet.add_worksheet(title=tab_name, rows=5000, cols=3)
+        print(f"  Hoja creada: '{tab_name}'")
+
+    return sheet
+
+
+def write_to_sheet(rows: list[tuple[str, str, str]], tab_name: str) -> None:
+    """
+    Sobreescribe la hoja con los datos dados.
+    rows: lista de (zipcode, city, state)
+    """
+    sheet = get_sheet(tab_name)
+
+    # Preparar datos: header + filas
+    data = [["Zipcode", "City", "State"]]
+    for zip_code, city, state in rows:
+        data.append([zip_code, city, state])
+
+    # Limpiar hoja y escribir de una vez
+    sheet.clear()
+    sheet.update(range_name="A1", values=data)
+    print(f"  Escrito en hoja '{tab_name}': {len(rows)} filas")
+
+
 # ── Zip → Ciudad, Estado ──────────────────────────────────────────────────────
 
-_zip_cache: dict[str, str] = {}
+_zip_cache: dict[str, tuple[str, str]] = {}
 
 
-def zip_location(zip_code: str) -> str:
-    """
-    Retorna "Ciudad, ST" para un zip code US.
-    Usa zippopotam.us — gratuito, sin key.
-    Fallback: solo el zip code si no encuentra.
-    """
+def zip_location(zip_code: str) -> tuple[str, str]:
+    """Retorna (city, state_abbr) para un zip code US via zippopotam.us."""
     if zip_code in _zip_cache:
         return _zip_cache[zip_code]
 
@@ -66,18 +115,16 @@ def zip_location(zip_code: str) -> str:
             timeout=5,
         )
         if resp.status_code == 200:
-            data  = resp.json()
-            place = data.get("places", [{}])[0]
+            place = resp.json().get("places", [{}])[0]
             city  = place.get("place name", "")
             state = place.get("state abbreviation", "")
-            location = f"{city}, {state}" if city and state else zip_code
         else:
-            location = zip_code
+            city, state = "", ""
     except Exception:
-        location = zip_code
+        city, state = "", ""
 
-    _zip_cache[zip_code] = location
-    return location
+    _zip_cache[zip_code] = (city, state)
+    return city, state
 
 
 # ── Ringba ────────────────────────────────────────────────────────────────────
@@ -104,7 +151,7 @@ def _post_calllogs(start_utc: datetime, end_utc: datetime, offset: int) -> dict:
 def fetch_zip_data(start_utc: datetime, end_utc: datetime) -> dict:
     """
     Retorna zip_code → {revenue, conversions, calls}.
-    Usa gather:zipcode con fallback a Geo:ZipCode.
+    gather:zipcode con fallback a Geo:ZipCode.
     """
     zip_map = defaultdict(lambda: {"revenue": 0.0, "conversions": 0, "calls": 0})
 
@@ -151,18 +198,19 @@ def fetch_zip_data(start_utc: datetime, end_utc: datetime) -> dict:
 
 # ── Date ranges ───────────────────────────────────────────────────────────────
 
-def weekly_range() -> tuple[datetime, datetime, str]:
-    tz    = pytz.timezone(TZ_NAME)
-    today = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-    last_monday = today - timedelta(days=today.weekday() + 7)
-    last_sunday = last_monday + timedelta(days=6, hours=23, minutes=59, seconds=59)
-    start_utc = last_monday.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
-    end_utc   = last_sunday.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
-    label = f"{last_monday.strftime('%d %b')} — {last_sunday.strftime('%d %b %Y')}"
-    return start_utc, end_utc, label
+def current_month_range() -> tuple[datetime, datetime, str]:
+    """Desde el inicio del mes actual hasta ahora."""
+    tz        = pytz.timezone(TZ_NAME)
+    now_local = datetime.now(tz)
+    first     = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start_utc = first.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
+    end_utc   = datetime.now(timezone.utc)
+    tab_name  = f"{MONTHS_ES[now_local.month]} {now_local.year}"
+    return start_utc, end_utc, tab_name
 
 
-def monthly_range() -> tuple[datetime, datetime, str]:
+def previous_month_range() -> tuple[datetime, datetime, str]:
+    """Mes anterior completo."""
     tz         = pytz.timezone(TZ_NAME)
     now_local  = datetime.now(tz)
     first_this = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -170,84 +218,8 @@ def monthly_range() -> tuple[datetime, datetime, str]:
     first_prev = last_prev.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     start_utc  = first_prev.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
     end_utc    = last_prev.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
-    MONTHS_ES  = {
-        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
-        5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
-        9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
-    }
-    label = f"{MONTHS_ES[first_prev.month]} {first_prev.year}"
-    return start_utc, end_utc, label
-
-
-# ── Format ────────────────────────────────────────────────────────────────────
-
-def _rank_by_revenue(zip_map: dict) -> list:
-    """Ordena por revenue desc. Desempate: conversiones desc. Retorna TODOS."""
-    return sorted(
-        zip_map.items(),
-        key=lambda x: (x[1]["revenue"], x[1]["conversions"]),
-        reverse=True,
-    )
-
-
-def build_messages(zip_map: dict, label: str, period_label: str) -> list[str]:
-    """
-    Genera lista de mensajes Discord (máx 1900 chars cada uno)
-    con todos los zip codes. El primero incluye el header.
-    """
-    ranked = _rank_by_revenue(zip_map)
-    if not ranked:
-        return [f"**📍 ZIP CODE REPORT — {period_label}**\n{label}\nSin datos de zip codes."]
-
-    total = len(ranked)
-    print(f"  Resolviendo ciudad/estado para {total} zips...")
-    rows = []
-    for zip_code, _ in ranked:
-        location = zip_location(zip_code)
-        rows.append((zip_code, location))
-        time.sleep(0.05)  # evitar rate limit de zippopotam.us
-
-    # Construir líneas de datos
-    data_lines = []
-    for i, (zip_code, location) in enumerate(rows, 1):
-        data_lines.append(f"  {i:>4}  {zip_code:<7}  {location}")
-
-    # Paginar en mensajes de máx 1900 chars
-    messages = []
-    HEADER_FIRST = (
-        f"**📍 ZIP CODE REPORT — {period_label}**\n"
-        f"Período: {label} · {total} zips\n"
-    )
-    COLS_HEADER = [
-        "```",
-        f"  {'#':>4}  {'Zip':<7}  Ubicación",
-        "  " + "─" * 38,
-    ]
-    FOOTER = "```"
-
-    is_first = True
-    current_lines: list[str] = []
-    current_prefix = HEADER_FIRST if is_first else ""
-
-    for line in data_lines:
-        # Calcular tamaño del bloque actual si agregamos esta línea
-        block = current_prefix + "\n".join(COLS_HEADER + current_lines + [line] + [FOOTER])
-        if len(block) > 1900 and current_lines:
-            # Cerrar bloque actual y enviarlo
-            msg = current_prefix + "\n".join(COLS_HEADER + current_lines + [FOOTER])
-            messages.append(msg)
-            # Siguiente bloque: sin header principal
-            current_prefix = ""
-            current_lines = [line]
-        else:
-            current_lines.append(line)
-
-    # Último bloque
-    if current_lines:
-        msg = current_prefix + "\n".join(COLS_HEADER + current_lines + [FOOTER])
-        messages.append(msg)
-
-    return messages
+    tab_name   = f"{MONTHS_ES[first_prev.month]} {first_prev.year}"
+    return start_utc, end_utc, tab_name
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -257,38 +229,52 @@ def main() -> None:
     mode = os.environ.get("REPORT_MODE", "").lower()
 
     if "--weekly" in args or mode == "weekly":
-        report_mode  = "weekly"
-        period_label = "SEMANAL"
+        report_mode = "weekly"
+        start_utc, end_utc, tab_name = current_month_range()
     elif "--monthly" in args or mode == "monthly":
-        report_mode  = "monthly"
-        period_label = "MENSUAL"
+        report_mode = "monthly"
+        start_utc, end_utc, tab_name = previous_month_range()
     else:
         print("ERROR: especifica --weekly o --monthly (o REPORT_MODE=weekly|monthly)", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Modo: {report_mode}")
-
-    if report_mode == "weekly":
-        start_utc, end_utc, label = weekly_range()
-    else:
-        start_utc, end_utc, label = monthly_range()
-
+    print(f"Modo: {report_mode} → hoja: '{tab_name}'")
     print(f"Rango: {start_utc.strftime('%Y-%m-%d')} → {end_utc.strftime('%Y-%m-%d')}")
     print("Consultando Ringba...")
 
     zip_map = fetch_zip_data(start_utc, end_utc)
     total_zips = len(zip_map)
-    total_rev  = sum(d["revenue"] for d in zip_map.values())
-    print(f"  Zips únicos: {total_zips} | Revenue total: ${total_rev:.2f}")
+    print(f"  Zips únicos: {total_zips}")
 
-    messages = build_messages(zip_map, label, period_label)
-    print(f"  Mensajes Discord a enviar: {len(messages)}")
+    # Ordenar por revenue desc
+    ranked = sorted(
+        zip_map.items(),
+        key=lambda x: (x[1]["revenue"], x[1]["conversions"]),
+        reverse=True,
+    )
 
-    print("Enviando a Discord...")
-    for i, msg in enumerate(messages, 1):
-        discord_send(WEBHOOK, msg)
-        if i < len(messages):
-            time.sleep(0.5)  # evitar rate limit Discord
+    # Resolver ciudad/estado
+    print(f"  Resolviendo ciudad/estado para {total_zips} zips...")
+    rows: list[tuple[str, str, str]] = []
+    for i, (zip_code, _) in enumerate(ranked):
+        city, state = zip_location(zip_code)
+        rows.append((zip_code, city, state))
+        if (i + 1) % 100 == 0:
+            print(f"    {i+1}/{total_zips} resueltos...")
+        time.sleep(0.05)
+
+    # Escribir en Google Sheets
+    print("Escribiendo en Google Sheets...")
+    write_to_sheet(rows, tab_name)
+
+    # Notificación Discord
+    label_tipo = "Mensual completo" if report_mode == "monthly" else "Actualización semanal"
+    discord_send(
+        WEBHOOK,
+        f"**📍 ZIP Report actualizado** — {tab_name}\n"
+        f"{label_tipo} · {total_zips} zips únicos\n"
+        f"Ver: https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+    )
     print("✓ Completado.")
 
 
