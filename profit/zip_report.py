@@ -2,12 +2,14 @@
 """
 ZIP Code Report — Royalspace 2026
 
-Genera un ranking de zip codes por conversiones para el canal de Discord.
+Genera un ranking de zip codes por revenue para el canal de Discord.
 Dos modos:
-  --weekly  : semana anterior (lun–dom), solo ranking sin conteos
-  --monthly : mes anterior completo, con conteos de conversiones
+  --weekly  : semana anterior (lun–dom)
+  --monthly : mes anterior completo
 
-Un solo webhook para ambos modos (mismo canal).
+Formato: # | Zip | Ciudad, Estado
+Ordenado por revenue descendente, sin mostrar cantidades.
+Ciudad y estado obtenidos de zippopotam.us (gratuito, sin API key).
 
 Env vars requeridas:
   RINGBA_API_TOKEN, RINGBA_ACCOUNT_ID
@@ -18,17 +20,19 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+
 import pytz
 import requests
 
 sys.path.insert(0, os.path.dirname(__file__))
 from common.discord_client import send as discord_send
 
-RINGBA_TOKEN = os.environ["RINGBA_API_TOKEN"]
+RINGBA_TOKEN   = os.environ["RINGBA_API_TOKEN"]
 RINGBA_ACCOUNT = os.environ["RINGBA_ACCOUNT_ID"]
-WEBHOOK = os.environ["DISCORD_WEBHOOK_ZIP"]
+WEBHOOK        = os.environ["DISCORD_WEBHOOK_ZIP"]
 
 TZ_NAME   = "America/New_York"
 PAGE_SIZE = 1000
@@ -41,6 +45,40 @@ VALUE_COLUMNS = [
     "hasConverted",
     "conversionAmount",
 ]
+
+
+# ── Zip → Ciudad, Estado ──────────────────────────────────────────────────────
+
+_zip_cache: dict[str, str] = {}
+
+
+def zip_location(zip_code: str) -> str:
+    """
+    Retorna "Ciudad, ST" para un zip code US.
+    Usa zippopotam.us — gratuito, sin key.
+    Fallback: solo el zip code si no encuentra.
+    """
+    if zip_code in _zip_cache:
+        return _zip_cache[zip_code]
+
+    try:
+        resp = requests.get(
+            f"https://api.zippopotam.us/us/{zip_code}",
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data  = resp.json()
+            place = data.get("places", [{}])[0]
+            city  = place.get("place name", "")
+            state = place.get("state abbreviation", "")
+            location = f"{city}, {state}" if city and state else zip_code
+        else:
+            location = zip_code
+    except Exception:
+        location = zip_code
+
+    _zip_cache[zip_code] = location
+    return location
 
 
 # ── Ringba ────────────────────────────────────────────────────────────────────
@@ -66,11 +104,10 @@ def _post_calllogs(start_utc: datetime, end_utc: datetime, offset: int) -> dict:
 
 def fetch_zip_data(start_utc: datetime, end_utc: datetime) -> dict:
     """
-    Retorna zip_code → {conversions, revenue, calls}.
+    Retorna zip_code → {revenue, conversions, calls}.
     Usa gather:zipcode con fallback a Geo:ZipCode.
-    Incluye todos los publishers.
     """
-    zip_map = defaultdict(lambda: {"conversions": 0, "revenue": 0.0, "calls": 0})
+    zip_map = defaultdict(lambda: {"revenue": 0.0, "conversions": 0, "calls": 0})
 
     chunk_start = start_utc
     while chunk_start < end_utc:
@@ -145,50 +182,36 @@ def monthly_range() -> tuple[datetime, datetime, str]:
 
 # ── Format ────────────────────────────────────────────────────────────────────
 
-def _rank(zip_map: dict) -> list:
+def _rank_by_revenue(zip_map: dict) -> list:
+    """Ordena por revenue desc. Desempate: conversiones desc."""
     return sorted(
         zip_map.items(),
-        key=lambda x: (x[1]["conversions"], x[1]["calls"]),
+        key=lambda x: (x[1]["revenue"], x[1]["conversions"]),
         reverse=True,
     )[:TOP_N]
 
 
-def format_weekly(zip_map: dict, label: str) -> str:
-    ranked = _rank(zip_map)
+def format_report(zip_map: dict, label: str, period_label: str) -> str:
+    ranked = _rank_by_revenue(zip_map)
     if not ranked:
-        return f"**📍 ZIP CODE REPORT — SEMANAL**\nSemana: {label}\nSin datos de zip codes esta semana."
+        return f"**📍 ZIP CODE REPORT — {period_label}**\n{label}\nSin datos de zip codes."
+
+    print(f"  Resolviendo ciudad/estado para {len(ranked)} zips...")
+    rows = []
+    for zip_code, _ in ranked:
+        location = zip_location(zip_code)
+        rows.append((zip_code, location))
+        time.sleep(0.05)  # evitar rate limit
 
     lines = [
-        f"**📍 TOP {len(ranked)} ZIP CODES — SEMANAL**",
-        f"Semana: {label}",
-        "```",
-    ]
-    half = (len(ranked) + 1) // 2
-    col1, col2 = ranked[:half], ranked[half:]
-    for i in range(half):
-        z1   = col1[i][0]
-        line = f"  {i+1:>2}. {z1:<10}"
-        if i < len(col2):
-            line += f"  {i+1+half:>2}. {col2[i][0]}"
-        lines.append(line)
-    lines.append("```")
-    return "\n".join(lines)
-
-
-def format_monthly(zip_map: dict, label: str) -> str:
-    ranked = _rank(zip_map)
-    if not ranked:
-        return f"**📍 ZIP CODE REPORT — MENSUAL**\nPeríodo: {label}\nSin datos de zip codes este mes."
-
-    lines = [
-        f"**📍 ZIP CODE REPORT — MENSUAL**",
+        f"**📍 ZIP CODE REPORT — {period_label}**",
         f"Período: {label}",
         "```",
-        f"  {'#':>2}  {'Zip':<10}  {'Convs':>5}  {'Llamadas':>8}",
-        "  " + "─" * 34,
+        f"  {'#':>2}  {'Zip':<7}  Ubicación",
+        "  " + "─" * 38,
     ]
-    for i, (zip_code, data) in enumerate(ranked, 1):
-        lines.append(f"  {i:>2}  {zip_code:<10}  {data['conversions']:>5}  {data['calls']:>8}")
+    for i, (zip_code, location) in enumerate(rows, 1):
+        lines.append(f"  {i:>2}  {zip_code:<7}  {location}")
     lines.append("```")
     return "\n".join(lines)
 
@@ -200,9 +223,11 @@ def main() -> None:
     mode = os.environ.get("REPORT_MODE", "").lower()
 
     if "--weekly" in args or mode == "weekly":
-        report_mode = "weekly"
+        report_mode  = "weekly"
+        period_label = "SEMANAL"
     elif "--monthly" in args or mode == "monthly":
-        report_mode = "monthly"
+        report_mode  = "monthly"
+        period_label = "MENSUAL"
     else:
         print("ERROR: especifica --weekly o --monthly (o REPORT_MODE=weekly|monthly)", file=sys.stderr)
         sys.exit(1)
@@ -218,9 +243,11 @@ def main() -> None:
     print("Consultando Ringba...")
 
     zip_map = fetch_zip_data(start_utc, end_utc)
-    print(f"  Zips únicos: {len(zip_map)} | Conversiones: {sum(d['conversions'] for d in zip_map.values())}")
+    total_zips = len(zip_map)
+    total_rev  = sum(d["revenue"] for d in zip_map.values())
+    print(f"  Zips únicos: {total_zips} | Revenue total: ${total_rev:.2f}")
 
-    msg = format_weekly(zip_map, label) if report_mode == "weekly" else format_monthly(zip_map, label)
+    msg = format_report(zip_map, label, period_label)
     if len(msg) > 1900:
         msg = msg[:1900] + "\n..."
 
