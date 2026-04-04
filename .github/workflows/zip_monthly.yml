@@ -2,8 +2,8 @@ name: Profit — ZIP Code Report (Mensual)
 
 on:
   schedule:
-    # Día 1 de cada mes, 9:00 AM EST (14:00 UTC) — cierra mes anterior
-    - cron: "0 14 1 * *"
+    # Día 1 de cada mes, 5:00 AM EST (10:00 UTC) — cierra mes anterior
+    - cron: "0 10 1 * *"
   workflow_dispatch:
 
 jobs:

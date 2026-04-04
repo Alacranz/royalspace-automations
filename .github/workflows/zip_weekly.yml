@@ -2,8 +2,8 @@ name: Profit — ZIP Code Report (Semanal)
 
 on:
   schedule:
-    # Lunes 9:00 AM EST (14:00 UTC) — actualiza hoja del mes actual
-    - cron: "0 14 * * 1"
+    # Lunes 5:00 AM EST (10:00 UTC) — actualiza hoja del mes actual
+    - cron: "0 10 * * 1"
   workflow_dispatch:
 
 jobs:
