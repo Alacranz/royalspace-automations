@@ -1,0 +1,25 @@
+name: Billing Dashboard
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # 9:00 AM VET (UTC-4) todos los días
+  workflow_dispatch:
+
+jobs:
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r billing/requirements.txt
+
+      - name: Run dashboard
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          BILLING_SPREADSHEET_ID:      ${{ secrets.BILLING_SPREADSHEET_ID }}
+        run: python billing/dashboard.py
