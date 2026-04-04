@@ -4,46 +4,35 @@ ZIP Code Report — Royalspace 2026
 
 Genera un ranking de zip codes por conversiones para el canal de Discord.
 Dos modos:
-  --weekly  : semana anterior (lun–dom), sin conteos (solo ranking)
+  --weekly  : semana anterior (lun–dom), solo ranking sin conteos
   --monthly : mes anterior completo, con conteos de conversiones
 
-Envía a dos webhooks:
-  DISCORD_WEBHOOK_ZIP_INTERNAL → todos los datos (incluye grupo privado)
-  DISCORD_WEBHOOK_ZIP_EXTERNAL → excluye llamadas del grupo privado
-
-Publishers privados (config: accounts_private_groups):
-  "you", "T.I Angela Monroy"
+Un solo webhook para ambos modos (mismo canal).
 
 Env vars requeridas:
   RINGBA_API_TOKEN, RINGBA_ACCOUNT_ID
-  DISCORD_WEBHOOK_ZIP_INTERNAL
-  DISCORD_WEBHOOK_ZIP_EXTERNAL
+  DISCORD_WEBHOOK_ZIP
   REPORT_MODE = "weekly" | "monthly"
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
 import pytz
 import requests
 
 sys.path.insert(0, os.path.dirname(__file__))
 from common.discord_client import send as discord_send
 
-RINGBA_TOKEN     = os.environ["RINGBA_API_TOKEN"]
-RINGBA_ACCOUNT   = os.environ["RINGBA_ACCOUNT_ID"]
-WEBHOOK_INTERNAL = os.environ["DISCORD_WEBHOOK_ZIP_INTERNAL"]
-WEBHOOK_EXTERNAL = os.environ["DISCORD_WEBHOOK_ZIP_EXTERNAL"]
+RINGBA_TOKEN = os.environ["RINGBA_API_TOKEN"]
+RINGBA_ACCOUNT = os.environ["RINGBA_ACCOUNT_ID"]
+WEBHOOK = os.environ["DISCORD_WEBHOOK_ZIP"]
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
-TZ_NAME     = "America/New_York"
-PAGE_SIZE   = 1000
-TOP_N       = 20
+TZ_NAME   = "America/New_York"
+PAGE_SIZE = 1000
+TOP_N     = 20
 
 VALUE_COLUMNS = [
     "publisherName",
@@ -52,17 +41,6 @@ VALUE_COLUMNS = [
     "hasConverted",
     "conversionAmount",
 ]
-
-
-def load_private_publishers() -> set[str]:
-    """Carga los publisher names del grupo privado desde config.json."""
-    with open(CONFIG_PATH, encoding="utf-8") as f:
-        config = json.load(f)
-    private: set[str] = set()
-    for group in config.get("accounts_private_groups") or []:
-        for pub in group.get("publishers") or []:
-            private.add(pub.strip().lower())
-    return private
 
 
 # ── Ringba ────────────────────────────────────────────────────────────────────
@@ -86,22 +64,13 @@ def _post_calllogs(start_utc: datetime, end_utc: datetime, offset: int) -> dict:
     return resp.json()
 
 
-def fetch_zip_data(
-    start_utc: datetime,
-    end_utc: datetime,
-    private_publishers: set[str],
-) -> tuple[dict, dict]:
+def fetch_zip_data(start_utc: datetime, end_utc: datetime) -> dict:
     """
-    Retorna (zip_map_all, zip_map_public).
-    zip_map_all    → todos los publishers (para internal)
-    zip_map_public → excluye grupo privado (para external)
-    Cada map: zip_code → {conversions, revenue, calls}
+    Retorna zip_code → {conversions, revenue, calls}.
+    Usa gather:zipcode con fallback a Geo:ZipCode.
+    Incluye todos los publishers.
     """
-    def empty_map():
-        return defaultdict(lambda: {"conversions": 0, "revenue": 0.0, "calls": 0})
-
-    zip_all    = empty_map()
-    zip_public = empty_map()
+    zip_map = defaultdict(lambda: {"conversions": 0, "revenue": 0.0, "calls": 0})
 
     chunk_start = start_utc
     while chunk_start < end_utc:
@@ -126,28 +95,14 @@ def fetch_zip_data(
                 if zip_code.isdigit() and len(zip_code) < 5:
                     zip_code = zip_code.zfill(5)
 
-                converted = r.get("hasConverted") is True
-                try:
-                    revenue = float(r.get("conversionAmount") or 0)
-                except (ValueError, TypeError):
-                    revenue = 0.0
-
-                # Siempre agregar a all
-                z = zip_all[zip_code]
+                z = zip_map[zip_code]
                 z["calls"] += 1
-                if converted:
+                if r.get("hasConverted") is True:
                     z["conversions"] += 1
-                    z["revenue"] += revenue
-
-                # Solo agregar a public si no es publisher privado
-                pub_name = str(r.get("publisherName") or "").strip().lower()
-                is_private = any(priv in pub_name for priv in private_publishers)
-                if not is_private:
-                    z2 = zip_public[zip_code]
-                    z2["calls"] += 1
-                    if converted:
-                        z2["conversions"] += 1
-                        z2["revenue"] += revenue
+                    try:
+                        z["revenue"] += float(r.get("conversionAmount") or 0)
+                    except (ValueError, TypeError):
+                        pass
 
             offset += len(records)
             if len(records) < PAGE_SIZE:
@@ -155,13 +110,13 @@ def fetch_zip_data(
 
         chunk_start += timedelta(hours=24)
 
-    return dict(zip_all), dict(zip_public)
+    return dict(zip_map)
 
 
 # ── Date ranges ───────────────────────────────────────────────────────────────
 
 def weekly_range() -> tuple[datetime, datetime, str]:
-    tz = pytz.timezone(TZ_NAME)
+    tz    = pytz.timezone(TZ_NAME)
     today = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
     last_monday = today - timedelta(days=today.weekday() + 7)
     last_sunday = last_monday + timedelta(days=6, hours=23, minutes=59, seconds=59)
@@ -172,8 +127,8 @@ def weekly_range() -> tuple[datetime, datetime, str]:
 
 
 def monthly_range() -> tuple[datetime, datetime, str]:
-    tz = pytz.timezone(TZ_NAME)
-    now_local = datetime.now(tz)
+    tz         = pytz.timezone(TZ_NAME)
+    now_local  = datetime.now(tz)
     first_this = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     last_prev  = first_this - timedelta(seconds=1)
     first_prev = last_prev.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -211,11 +166,10 @@ def format_weekly(zip_map: dict, label: str) -> str:
     half = (len(ranked) + 1) // 2
     col1, col2 = ranked[:half], ranked[half:]
     for i in range(half):
-        z1 = col1[i][0]
+        z1   = col1[i][0]
         line = f"  {i+1:>2}. {z1:<10}"
         if i < len(col2):
-            z2 = col2[i][0]
-            line += f"  {i+1+half:>2}. {z2}"
+            line += f"  {i+1+half:>2}. {col2[i][0]}"
         lines.append(line)
     lines.append("```")
     return "\n".join(lines)
@@ -227,7 +181,7 @@ def format_monthly(zip_map: dict, label: str) -> str:
         return f"**📍 ZIP CODE REPORT — MENSUAL**\nPeríodo: {label}\nSin datos de zip codes este mes."
 
     lines = [
-        f"**📍 TOP {len(ranked)} ZIP CODES — MENSUAL**",
+        f"**📍 ZIP CODE REPORT — MENSUAL**",
         f"Período: {label}",
         "```",
         f"  {'#':>2}  {'Zip':<10}  {'Convs':>5}  {'Llamadas':>8}",
@@ -261,33 +215,17 @@ def main() -> None:
         start_utc, end_utc, label = monthly_range()
 
     print(f"Rango: {start_utc.strftime('%Y-%m-%d')} → {end_utc.strftime('%Y-%m-%d')}")
-
-    private_publishers = load_private_publishers()
-    print(f"Publishers privados: {private_publishers}")
-
     print("Consultando Ringba...")
-    zip_all, zip_public = fetch_zip_data(start_utc, end_utc, private_publishers)
 
-    print(f"  Zips (todos): {len(zip_all)} | Zips (público): {len(zip_public)}")
-    print(f"  Conversiones (todos): {sum(d['conversions'] for d in zip_all.values())}")
-    print(f"  Conversiones (público): {sum(d['conversions'] for d in zip_public.values())}")
+    zip_map = fetch_zip_data(start_utc, end_utc)
+    print(f"  Zips únicos: {len(zip_map)} | Conversiones: {sum(d['conversions'] for d in zip_map.values())}")
 
-    formatter = format_weekly if report_mode == "weekly" else format_monthly
+    msg = format_weekly(zip_map, label) if report_mode == "weekly" else format_monthly(zip_map, label)
+    if len(msg) > 1900:
+        msg = msg[:1900] + "\n..."
 
-    msg_internal = formatter(zip_all, label)
-    msg_external = formatter(zip_public, label)
-
-    if len(msg_internal) > 1900:
-        msg_internal = msg_internal[:1900] + "\n..."
-    if len(msg_external) > 1900:
-        msg_external = msg_external[:1900] + "\n..."
-
-    print("Enviando a Discord (internal)...")
-    discord_send(WEBHOOK_INTERNAL, msg_internal)
-
-    print("Enviando a Discord (external)...")
-    discord_send(WEBHOOK_EXTERNAL, msg_external)
-
+    print("Enviando a Discord...")
+    discord_send(WEBHOOK, msg)
     print("✓ Completado.")
 
 
