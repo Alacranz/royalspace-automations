@@ -87,6 +87,7 @@ def write_to_sheet(rows: list[tuple[str, str, str]], tab_name: str) -> None:
     sheet.clear()
     sheet.update(range_name="A1", values=data)
     sheet.resize(rows=len(data), cols=3)
+    sheet.set_basic_filter()
     print(f"  Escrito en hoja '{tab_name}': {len(rows)} zips")
 
 

@@ -32,7 +32,8 @@ def main():
             all_values = sheet.get_all_values()
             actual_rows = len(all_values)
             sheet.resize(rows=actual_rows, cols=3)
-            print(f"  ✅ '{tab_name}' → redimensionada a {actual_rows} filas")
+            sheet.set_basic_filter()
+            print(f"  ✅ '{tab_name}' → redimensionada a {actual_rows} filas + filtro aplicado")
         except gspread.WorksheetNotFound:
             print(f"  ⚠️  '{tab_name}' no encontrada — omitida")
         except Exception as e:
