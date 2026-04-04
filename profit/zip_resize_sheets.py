@@ -28,9 +28,24 @@ def main():
     for tab_name in TABS_TO_FIX:
         try:
             sheet = spreadsheet.worksheet(tab_name)
-            # Contar filas con datos reales
             all_values = sheet.get_all_values()
             actual_rows = len(all_values)
+
+            # Reescribir con zips como enteros para que el formato 00000 aplique
+            new_values = []
+            for i, row in enumerate(all_values):
+                if i == 0:
+                    new_values.append(row)  # header intacto
+                    continue
+                zip_cell = row[0] if row else ""
+                try:
+                    zip_val = int(str(zip_cell).strip().lstrip("'"))
+                except (ValueError, TypeError):
+                    zip_val = zip_cell
+                new_values.append([zip_val] + row[1:])
+
+            sheet.clear()
+            sheet.update(range_name="A1", values=new_values, value_input_option="RAW")
             sheet.resize(rows=actual_rows, cols=3)
             sheet.format("A2:A{}".format(actual_rows), {"numberFormat": {"type": "NUMBER", "pattern": "00000"}})
             sheet.set_basic_filter()
