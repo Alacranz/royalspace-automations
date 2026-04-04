@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "uvicorn manychat.main:app --host 0.0.0.0 --port $PORT",
+    "startCommand": "pip install gspread google-auth -q && uvicorn manychat.main:app --host 0.0.0.0 --port $PORT",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }
