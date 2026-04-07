@@ -61,6 +61,8 @@ TONE RULES:
 - Vary your phrasing naturally — never repeat the same sentence, closing line, or call-to-action twice in a row. Each response should feel fresh.
 - NEVER invent prices, addresses, clinic names, or schedules.
 - Sound like a real, warm human — conversational, natural, empathetic. Never stiff or robotic.
+- NEVER use markdown formatting. No asterisks (**word**), no underscores (_word_), no symbols for formatting. Plain text only — Messenger does not render markdown and it will appear as literal characters, confusing the user.
+- NEVER mention the name of any other service, page, clinic, or company other than Dentista Latino. If a user mentions another name (like "Dental Care", "Aspen Dental", etc.), you may clarify we are Dentista Latino — but never use the competitor's name again or compare yourself to them beyond a brief clarification.
 
 BEHAVIOR RULES:
 - READ THE FULL CONVERSATION HISTORY carefully before responding. If the user mentioned something before (a problem, a pain, that they called and no one answered, no coverage in their area), acknowledge it with empathy — never ignore prior context.
@@ -305,6 +307,16 @@ def extract_zip(text: str) -> str | None:
     return match.group(0) if match else None
 
 
+def _zip_in_history(history: list[dict]) -> str | None:
+    """Scan user messages in history (most recent first) for a zip code."""
+    for msg in reversed(history):
+        if msg["role"] == "user":
+            z = extract_zip(msg["content"])
+            if z:
+                return z
+    return None
+
+
 def resolve_zip(zip_code: str) -> str:
     try:
         resp = http_requests.get(
@@ -355,9 +367,8 @@ async def chat(req: ChatRequest) -> JSONResponse:
     returning = is_returning_user(history_full)
     user_msg_count = count_user_messages(req.subscriber_id)
 
-    # Zip: SOLO lo que el usuario escribió explícitamente en el mensaje
-    # req.zip_code es el campo de ManyChat (puede venir de antes sin que el usuario lo haya dado en esta conv)
-    detected_zip = extract_zip(text) or req.zip_code or ""
+    # Zip: mensaje actual → historial de conversación → campo ManyChat
+    detected_zip = extract_zip(text) or _zip_in_history(history_full) or req.zip_code or ""
 
     # ── Detectar tipo de mensaje ──────────────────────────────────────────────
     image_sent      = is_image_or_attachment(text)
@@ -401,7 +412,7 @@ async def chat(req: ChatRequest) -> JSONResponse:
             "is to call us — that's where everything gets resolved. Make calling feel like the natural answer."
         )
 
-    if not detected_zip and user_msg_count >= MSGS_BEFORE_ZIP_INSIST:
+    if not detected_zip and user_msg_count >= MSGS_BEFORE_ZIP_INSIST and not _zip_in_history(history_full):
         context_parts.append(
             f"IMPORTANT: The user has sent {user_msg_count} messages WITHOUT providing a zip code. "
             "Be more direct and insistent: you NEED their zip code to find the nearest dentist. "
