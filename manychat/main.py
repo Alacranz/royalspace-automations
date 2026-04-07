@@ -33,7 +33,7 @@ import pytz
 
 import anthropic
 import requests as http_requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -585,17 +585,93 @@ async def billing_debug(token: str = "") -> JSONResponse:
     return JSONResponse(result)
 
 
+_LOGIN_PAGE = """<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Royalspace — Acceso</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body {{ background: #0f0f1a; }}
+  input[type=password] {{ letter-spacing: 0.3em; }}
+</style>
+</head>
+<body class="min-h-screen flex items-center justify-center">
+  <div style="background:#1a1a2e;border:1px solid #2d2d4e;border-radius:16px;padding:40px 48px;width:360px;">
+    <div style="text-align:center;margin-bottom:28px;">
+      <p style="color:#e2e8f0;font-size:1.4rem;font-weight:700;font-family:sans-serif;">Royalspace</p>
+      <p style="color:#6b7280;font-size:0.85rem;font-family:sans-serif;margin-top:4px;">Billing Dashboard</p>
+    </div>
+    <form method="POST" action="/billing/login">
+      <div style="margin-bottom:16px;">
+        <label style="color:#9ca3af;font-size:0.8rem;font-family:sans-serif;display:block;margin-bottom:6px;">PIN de acceso</label>
+        <input type="password" name="pin" autofocus autocomplete="off"
+          style="width:100%;padding:12px 14px;background:#0f0f1a;border:1px solid #374151;border-radius:8px;color:#e2e8f0;font-size:1.1rem;outline:none;box-sizing:border-box;"
+          placeholder="••••••">
+      </div>
+      {error}
+      <button type="submit"
+        style="width:100%;padding:12px;background:#4f46e5;border:none;border-radius:8px;color:white;font-size:0.95rem;font-family:sans-serif;cursor:pointer;margin-top:4px;">
+        Entrar
+      </button>
+    </form>
+  </div>
+</body>
+</html>"""
+
+
+def _check_session(request) -> bool:
+    """Verifica que la cookie de sesión sea válida."""
+    expected = os.environ.get("BILLING_DASHBOARD_TOKEN", "")
+    session  = request.cookies.get("billing_session", "")
+    return bool(expected) and session == expected
+
+
+@app.get("/billing/login")
+async def billing_login_page() -> object:
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(_LOGIN_PAGE.format(error=""))
+
+
+@app.post("/billing/login")
+async def billing_login(request: Request) -> object:
+    from fastapi.responses import HTMLResponse, RedirectResponse
+    form    = await request.form()
+    pin     = form.get("pin", "")
+    expected = os.environ.get("BILLING_DASHBOARD_TOKEN", "")
+    if pin == expected:
+        response = RedirectResponse(url="/billing", status_code=303)
+        response.set_cookie(
+            key="billing_session",
+            value=expected,
+            httponly=True,
+            samesite="lax",
+            max_age=8 * 3600,  # 8 horas
+        )
+        return response
+    error_html = '<p style="color:#f87171;font-size:0.82rem;font-family:sans-serif;margin-bottom:12px;">PIN incorrecto. Intenta de nuevo.</p>'
+    return HTMLResponse(_LOGIN_PAGE.format(error=error_html), status_code=401)
+
+
+@app.get("/billing/logout")
+async def billing_logout() -> object:
+    from fastapi.responses import RedirectResponse
+    response = RedirectResponse(url="/billing/login", status_code=303)
+    response.delete_cookie("billing_session")
+    return response
+
+
 @app.get("/billing")
-async def billing_dashboard(token: str = "") -> object:
+async def billing_dashboard(request: Request) -> object:
     """
     Billing Dashboard — reads DASHBOARD_* tabs from Google Sheets.
-    Protected by BILLING_DASHBOARD_TOKEN env var.
+    Protected by PIN login + session cookie.
     """
-    from fastapi.responses import HTMLResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse
 
-    expected = os.environ.get("BILLING_DASHBOARD_TOKEN", "")
-    if expected and token != expected:
-        return HTMLResponse("<h1>401 Unauthorized</h1>", status_code=401)
+    if not _check_session(request):
+        return RedirectResponse(url="/billing/login", status_code=303)
 
     creds_json      = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
     spreadsheet_id  = os.environ.get("BILLING_SPREADSHEET_ID", "")
@@ -691,6 +767,7 @@ async def billing_dashboard(token: str = "") -> object:
     <div class="text-right">
       <p class="text-gray-500 text-xs">Actualizado</p>
       <p class="text-gray-300 text-sm font-medium">{updated_at}</p>
+      <a href="/billing/logout" class="text-xs text-gray-600 hover:text-gray-400 mt-1 block">Cerrar sesión</a>
     </div>
   </div>
 
