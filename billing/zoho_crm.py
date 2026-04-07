@@ -122,7 +122,7 @@ def log_invoice_deal(
 ) -> str:
     """
     Creates a Deal in CRM for an invoice.
-    Stage: 'Needs Analysis' (pending payment).
+    Stage: 'Invoice Sent' (pending payment).
     Returns deal_id.
     """
     existing = find_deal(token, invoice_number)
@@ -133,7 +133,7 @@ def log_invoice_deal(
     deal = {
         "Deal_Name":        invoice_number,
         "Account_Name":     {"id": account_id},
-        "Stage":            "Needs Analysis",
+        "Stage":            "Qualification",  # = Invoice Sent
         "Amount":           revenue,
         "Closing_Date":     due_date,
         "Description":      f"Factura {invoice_number} — {buyer_name} — {billed_month}",
@@ -168,7 +168,7 @@ def mark_deal_paid(token: str, invoice_number: str, payment_date: str) -> bool:
         json={"data": [{
             "Stage":        "Closed Won",
             "Closing_Date": payment_date,
-            "Description":  deal.get("Description", "") + f"\nPagado: {payment_date}",
+            "Description":  deal.get("Description", "") + f"\nPaid: {payment_date}",
         }]},
         timeout=30,
     ).raise_for_status()
@@ -190,8 +190,8 @@ def mark_deal_overdue(token: str, invoice_number: str, days_overdue: int) -> boo
         f"{ZOHO_CRM_URL}/Deals/{deal_id}",
         headers=_h(token),
         json={"data": [{
-            "Stage":       "Value Proposition",   # custom stage for overdue
-            "Description": deal.get("Description", "") + f"\nVENCIDO — {days_overdue} días sin pagar",
+            "Stage":       "Needs Analysis",  # = Overdue
+            "Description": deal.get("Description", "") + f"\nOverdue — {days_overdue} days unpaid",
         }]},
         timeout=30,
     ).raise_for_status()
