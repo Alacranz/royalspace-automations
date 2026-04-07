@@ -42,6 +42,7 @@ from billing.payment_tracker import (                                # noqa: E40
     log_invoice, refresh_statuses,
     get_pending_state, set_pending_state, clear_pending_state,
 )
+from billing.zoho_crm import get_crm_token, upsert_contact, log_invoice_deal  # noqa: E402
 
 EST = pytz.timezone("America/New_York")
 
@@ -138,6 +139,15 @@ def run() -> None:
     print("\n[Zoho] Getting access token...")
     zoho_token = get_access_token(zoho_client_id, zoho_secret, zoho_refresh)
     print("  [Zoho] Token OK")
+
+    # ── Zoho CRM token ─────────────────────────────────────────────────────────
+    crm_token = None
+    if os.environ.get("ZOHO_REFRESH_TOKEN_CRM"):
+        try:
+            crm_token = get_crm_token()
+            print("  [CRM] Token OK")
+        except Exception as e:
+            print(f"  [CRM] Token error (skipping CRM sync): {e}")
 
     # ── Process each buyer ─────────────────────────────────────────────────────
     results = []
@@ -259,6 +269,23 @@ def run() -> None:
                 invoice_date=invoice_date,
                 due_date=due_date_str,
             )
+
+            # ── CRM: upsert contact + create deal ─────────────────────────────
+            if crm_token:
+                try:
+                    category   = buyer.get("category", "")
+                    account_id = upsert_contact(crm_token, display, category)
+                    log_invoice_deal(
+                        token=crm_token,
+                        account_id=account_id,
+                        invoice_number=invoice_number,
+                        buyer_name=display,
+                        billed_month=period_label_es,
+                        revenue=total_revenue,
+                        due_date=due_date_str,
+                    )
+                except Exception as e:
+                    print(f"  [CRM] Error logging deal: {e}")
 
             # Reset pending state — next cycle starts fresh
             clear_pending_state(spreadsheet_id, gsheets_creds, display, current_ym)

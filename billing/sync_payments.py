@@ -21,6 +21,7 @@ sys.path.insert(0, _DIR)
 from billing.zoho_client import get_access_token, list_invoices  # noqa: E402
 from billing.payment_tracker import update_payment                # noqa: E402
 from billing.dashboard import main as refresh_dashboard           # noqa: E402
+from billing.zoho_crm import get_crm_token, mark_deal_paid        # noqa: E402
 
 
 def run() -> None:
@@ -33,6 +34,14 @@ def run() -> None:
 
     print("[Sync] Obteniendo token Zoho...")
     token = get_access_token(client_id, client_secret, refresh_token)
+
+    crm_token = None
+    if os.environ.get("ZOHO_REFRESH_TOKEN_CRM"):
+        try:
+            crm_token = get_crm_token()
+            print("[Sync] CRM token OK")
+        except Exception as e:
+            print(f"[Sync] CRM token error (skipping CRM sync): {e}")
 
     print("[Sync] Consultando facturas pagadas en Zoho Books...")
     paid_invoices = list_invoices(token, org_id, status="paid")
@@ -78,6 +87,11 @@ def run() -> None:
         if updated:
             synced += 1
             print(f"  ✓ {invoice_number} → PAGADO ({payment_date})")
+            if crm_token:
+                try:
+                    mark_deal_paid(crm_token, invoice_number, payment_date)
+                except Exception as e:
+                    print(f"  [CRM] Error marcando deal {invoice_number}: {e}")
         else:
             skipped += 1
 

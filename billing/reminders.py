@@ -29,7 +29,8 @@ from billing.ringba_buyer import (                        # noqa: E402
     get_buyer_revenue, get_current_month_utc_range, find_buyer_data
 )
 from billing.payment_tracker import get_outstanding_invoices, refresh_statuses  # noqa: E402
-from billing.sync_payments import run as sync_payments    # noqa: E402
+from billing.sync_payments import run as sync_payments                        # noqa: E402
+from billing.zoho_crm import get_crm_token, mark_deal_overdue, update_buyer_revenue  # noqa: E402
 
 EST = pytz.timezone("America/New_York")
 
@@ -100,6 +101,33 @@ def run() -> None:
             print(f"  [Sheets] {len(outstanding)} outstanding invoice(s)")
         except Exception as e:
             print(f"  [Sheets] Error fetching invoices: {e}")
+
+    # ── CRM: mark overdue + update revenue ───────────────────────────────────
+    crm_token = None
+    if os.environ.get("ZOHO_REFRESH_TOKEN_CRM"):
+        try:
+            crm_token = get_crm_token()
+            print("\n[CRM] Token OK")
+        except Exception as e:
+            print(f"\n[CRM] Token error (skipping CRM sync): {e}")
+
+    if crm_token:
+        # Mark overdue deals in CRM
+        for inv in outstanding:
+            if inv["overdue"] and inv["days_outstanding"] > 0:
+                try:
+                    mark_deal_overdue(crm_token, inv["invoice_number"], inv["days_outstanding"])
+                except Exception as e:
+                    print(f"  [CRM] Error marking overdue {inv['invoice_number']}: {e}")
+
+        # Update revenue MTD per buyer in CRM
+        for b in reminder_buyers:
+            data = find_buyer_data(buyer_map, b["ringba_buyer_sub_id"])
+            if data and data["revenue"] > 0:
+                try:
+                    update_buyer_revenue(crm_token, b["discord_name"], data["revenue"], month_label)
+                except Exception as e:
+                    print(f"  [CRM] Error updating revenue for {b['discord_name']}: {e}")
 
     # ── Build Discord messages ─────────────────────────────────────────────────
     _send_revenue_report(discord_webhook, month_label, reminder_buyers, buyer_map, threshold)

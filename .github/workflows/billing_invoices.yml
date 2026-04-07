@@ -50,4 +50,5 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           BILLING_SPREADSHEET_ID:      ${{ secrets.BILLING_SPREADSHEET_ID }}
           DISCORD_WEBHOOK_BILLING:     ${{ secrets.DISCORD_WEBHOOK_BILLING }}
+          ZOHO_REFRESH_TOKEN_CRM:      ${{ secrets.ZOHO_REFRESH_TOKEN_CRM }}
           DRY_RUN:                     ${{ github.event.inputs.dry_run || 'false' }}
