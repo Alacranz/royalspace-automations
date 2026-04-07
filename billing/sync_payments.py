@@ -20,6 +20,7 @@ sys.path.insert(0, _DIR)
 
 from billing.zoho_client import get_access_token, list_invoices  # noqa: E402
 from billing.payment_tracker import update_payment                # noqa: E402
+from billing.dashboard import main as refresh_dashboard           # noqa: E402
 
 
 def run() -> None:
@@ -81,6 +82,13 @@ def run() -> None:
             skipped += 1
 
     print(f"\n[Sync] Completado: {synced} actualizada(s), {skipped} no encontrada(s) en Sheet (ya pagadas o no registradas).")
+
+    if synced > 0:
+        print("\n[Sync] Refrescando dashboard...")
+        try:
+            refresh_dashboard()
+        except Exception as e:
+            print(f"  [Sync] Error refrescando dashboard: {e}")
 
 
 if __name__ == "__main__":
