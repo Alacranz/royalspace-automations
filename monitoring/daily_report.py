@@ -3,9 +3,8 @@
 Reporte diario de costos — Dentista Latino Webhook
 Envía a Discord #mod un resumen de uso y costos de Anthropic y Railway.
 """
-import json
 import os
-import sys
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -13,18 +12,32 @@ import requests
 WEBHOOK_URL        = os.environ["DISCORD_WEBHOOK_MOD"]
 WEBHOOK_STATS_URL  = os.environ["WEBHOOK_STATS_URL"]        # https://...railway.app/stats
 RAILWAY_TOKEN      = os.environ.get("RAILWAY_TOKEN", "")
-ANTHROPIC_BALANCE  = float(os.environ.get("ANTHROPIC_BALANCE") or "13.25")
+ANTHROPIC_BALANCE  = float(os.environ.get("ANTHROPIC_BALANCE") or "50.20")
 
 # ── 1. Estadísticas del webhook ───────────────────────────────────────────────
 
 def get_webhook_stats() -> dict:
-    try:
-        r = requests.get(WEBHOOK_STATS_URL, timeout=15)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        print(f"[Error] No se pudo obtener stats del webhook: {e}")
-        return {}
+    """Pide stats de ayer al endpoint /stats?date=YYYY-MM-DD."""
+    from datetime import timedelta
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    url = f"{WEBHOOK_STATS_URL}?date={yesterday}"
+    # Railway puede estar hibernado — intentar hasta 3 veces con pausa entre intentos
+    last_err = ""
+    for attempt in range(1, 4):
+        try:
+            print(f"[Stats] Intento {attempt}/3 — {url}")
+            r = requests.get(url, timeout=45)
+            r.raise_for_status()
+            data = r.json()
+            print(f"[Stats] OK: {data}")
+            return data
+        except Exception as e:
+            last_err = str(e)
+            print(f"[Stats] Intento {attempt} fallido: {e}")
+            if attempt < 3:
+                time.sleep(15)
+    print(f"[Error] Stats no disponibles tras 3 intentos: {last_err}")
+    return {"_error": last_err}
 
 # ── 2. Créditos de Railway ────────────────────────────────────────────────────
 
@@ -113,6 +126,7 @@ def build_message(stats: dict, railway: dict, github: dict) -> str:
     now   = datetime.now(timezone.utc)
     today = now.strftime("%d/%m/%Y")
 
+    stats_error = stats.get("_error")
     msgs_today  = stats.get("messages_today", "?")
     msgs_month  = stats.get("messages_month", "?")
     convs_today = stats.get("conversations_today", "?")
@@ -188,18 +202,20 @@ def build_message(stats: dict, railway: dict, github: dict) -> str:
         f"REPORTE DIARIO — {today}",
         "",
         "--- WEBHOOK MANYCHAT -------------------",
-        f"  Mensajes hoy        : {msgs_today}",
+        f"  Mensajes ayer       : {msgs_today}",
         f"  Mensajes este mes   : {msgs_month}",
-        f"  Contactos hoy       : {convs_today}",
+        f"  Contactos ayer      : {convs_today}",
         f"  Contactos este mes  : {convs_month}",
-        f"  Costo hoy           : ${cost_today:.4f}",
-        f"  Costo este mes      : ${cost_month:.4f}",
-        f"  Proyeccion mensual  : ${projection:.2f}",
+        f"  Costo ayer          : {f'${cost_today:.4f}' if not stats_error else 'N/A'}",
+        f"  Costo este mes      : {f'${cost_month:.4f}' if not stats_error else 'N/A'}",
+        f"  Proyeccion mensual  : {f'${projection:.2f}' if not stats_error else 'N/A'}",
+        *([ f"  ERROR               : {stats_error}" ] if stats_error else []),
         "",
         "--- ANTHROPIC (Claude Haiku) -----------",
         f"  Balance disponible  : ${anthropic_remaining:.2f}  ({anthropic_pct:.0f}%)",
-        f"  Gastado este mes    : ${cost_month:.4f}",
-        f"  Proyeccion mensual  : ${projection:.2f}",
+        f"  Gastado ayer        : {f'${cost_today:.4f}' if not stats_error else 'N/A'}",
+        f"  Gastado este mes    : {f'${cost_month:.4f}' if not stats_error else 'N/A'}",
+        f"  Proyeccion mensual  : {f'${projection:.2f}' if not stats_error else 'N/A'}",
         "",
         "--- RAILWAY ----------------------------",
         railway_block,

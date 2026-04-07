@@ -25,9 +25,11 @@ import re
 import sqlite3
 import unicodedata
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Generator
+
+import pytz
 
 import anthropic
 import requests as http_requests
@@ -54,6 +56,10 @@ LANGUAGE RULE (highest priority):
 
 IDENTITY RULE (absolute, never break):
 - You are a person on the Dentista Latino team. Never say, imply, or hint that you are a bot, AI, virtual assistant, automated system, or anything non-human. If someone asks or accuses you of being a bot, do NOT confirm or deny — simply stay in character, be warm, and redirect to calling us.
+
+GREETING RULE (critical):
+- NEVER start your response with "Hola", "¡Hola!", "Hello", or any greeting unless the user's current message is itself a greeting (e.g., "hola", "hi", "buenos días"). If the user is asking a question or expressing a need, go straight to helping them — no greeting. The user has already been welcomed; repeating it feels robotic and impersonal.
+- NEVER introduce yourself with a name or title. Do not say "Soy la Doctora X", "Me llamo X", "I'm [name]", or use any personal name for yourself.
 
 TONE RULES:
 - Always speak in first person plural as part of the Dentista Latino team: "llámanos", "cuando nos llames", "nosotros te ayudamos", "call us", "when you call us". NEVER say "llama a la clínica" or "ellos te dirán" or "call the clinic".
@@ -317,6 +323,42 @@ def _zip_in_history(history: list[dict]) -> str | None:
     return None
 
 
+BUSINESS_TZ = pytz.timezone("America/New_York")
+# L-V 8:00-20:00 EST, S 8:00-14:00 EST
+BUSINESS_HOURS = {
+    0: (8, 20),  # Monday
+    1: (8, 20),  # Tuesday
+    2: (8, 20),  # Wednesday
+    3: (8, 20),  # Thursday
+    4: (8, 20),  # Friday
+    5: (8, 14),  # Saturday
+    # Sunday: no hours (closed)
+}
+
+DAY_NAMES_ES = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado"}
+
+
+def get_next_open_str() -> str:
+    """Return a human-friendly string for when we next open (EST)."""
+    now = datetime.now(BUSINESS_TZ)
+    for delta in range(1, 8):
+        candidate = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        candidate = candidate + timedelta(days=delta)
+        hours = BUSINESS_HOURS.get(candidate.weekday())
+        if hours:
+            day = DAY_NAMES_ES.get(candidate.weekday(), "")
+            return f"el {day} a las {hours[0]}:00 AM"
+    return "pronto"
+
+
+def is_business_hours() -> bool:
+    now = datetime.now(BUSINESS_TZ)
+    hours = BUSINESS_HOURS.get(now.weekday())
+    if not hours:
+        return False
+    return hours[0] <= now.hour < hours[1]
+
+
 def resolve_zip(zip_code: str) -> str:
     try:
         resp = http_requests.get(
@@ -433,6 +475,16 @@ async def chat(req: ChatRequest) -> JSONResponse:
             "Create excitement and strong motivation to call us to discuss their specific case."
         )
 
+    if not is_business_hours():
+        next_open = get_next_open_str()
+        context_parts.append(
+            f"It is currently OUTSIDE business hours (Mon-Fri 8AM-8PM EST, Sat 8AM-2PM EST). "
+            f"We next open {next_open} EST. "
+            "Acknowledge the user's message warmly, tell them we are not available right now, "
+            f"and let them know they can reach us {next_open}. Encourage them to leave their question "
+            "and we will follow up, or to call us when we open. Keep it brief and warm."
+        )
+
     system = SYSTEM_PROMPT
     if context_parts:
         system += "\n\nCurrent user context:\n- " + "\n- ".join(context_parts)
@@ -470,9 +522,10 @@ async def health() -> dict:
 
 
 @app.get("/stats")
-async def stats() -> JSONResponse:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
+async def stats(date: str = "") -> JSONResponse:
+    now   = datetime.now(timezone.utc)
+    today = date if date else now.strftime("%Y-%m-%d")
+    month = today[:7]  # YYYY-MM
     with get_conn() as conn:
         def q(sql, *args):
             return conn.execute(sql, args).fetchone()[0] or 0
