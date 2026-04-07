@@ -29,6 +29,7 @@ from billing.ringba_buyer import (                        # noqa: E402
     get_buyer_revenue, get_current_month_utc_range, find_buyer_data
 )
 from billing.payment_tracker import get_outstanding_invoices, refresh_statuses  # noqa: E402
+from billing.sync_payments import run as sync_payments    # noqa: E402
 
 EST = pytz.timezone("America/New_York")
 
@@ -69,6 +70,19 @@ def run() -> None:
 
     print("\n[Ringba] Fetching buyer revenue...")
     buyer_map = get_buyer_revenue(ringba_token, ringba_acct, start_utc, end_utc, verbose=False)
+
+    # ── Sync pagos desde Zoho Books → Google Sheets ───────────────────────────
+    zoho_client_id     = os.environ.get("ZOHO_CLIENT_ID", "")
+    zoho_client_secret = os.environ.get("ZOHO_CLIENT_SECRET", "")
+    zoho_refresh_token = os.environ.get("ZOHO_REFRESH_TOKEN", "")
+    if zoho_client_id and zoho_client_secret and zoho_refresh_token and gsheets_creds and spreadsheet_id:
+        try:
+            print("\n[Sync] Sincronizando pagos Zoho → Sheets...")
+            sync_payments()
+        except Exception as e:
+            print(f"  [Sync] Error sincronizando pagos: {e}")
+    else:
+        print("\n[Sync] Skipped — faltan credenciales Zoho o Sheets")
 
     # ── Refresh invoice statuses in Sheet (PENDIENTE → VENCIDO if overdue) ────
     if gsheets_creds and spreadsheet_id:
