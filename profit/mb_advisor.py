@@ -88,23 +88,13 @@ def generate_advice(mb_name: str, context: dict) -> str:
     Llama a Claude Haiku para generar recomendaciones accionables.
     context incluye: today, trend_7d, best_adsets, worst_adsets, status
     """
-    prompt = f"""Eres el advisor de performance de Royalspace, una empresa de marketing dental pay-per-call.
-Analiza los datos del media buyer {mb_name} y da 2-3 recomendaciones muy específicas y accionables para HOY.
+    prompt = f"""Eres el advisor de performance de Royalspace (dental pay-per-call).
+Media buyer: {mb_name}
+Spend: {context['spend_today']} | Profit: {context['profit_today']} ({context['status']}) | CVR: {context['cvr']:.1%} | Tendencia: {context['trend']}
+Peores adsets: {context['worst_adsets']}
+Mejores adsets: {context['best_adsets']}
 
-Datos de hoy:
-- Spend: {context['spend_today']}
-- Profit MB: {context['profit_today']} ({context['status']})
-- Llamadas: {context['calls']} | Conectadas: {context['connected']} | CVR: {context['cvr']:.1%}
-- Tendencia vs promedio 7 días: {context['trend']}
-
-Peores adsets (CPR alto, gastan presupuesto sin resultados):
-{context['worst_adsets']}
-
-Mejores adsets (CPR bajo, eficientes):
-{context['best_adsets']}
-
-Da recomendaciones concretas: qué pausar, qué escalar, qué ajustar en el targeting o budget.
-Sé directo, específico y breve. Máximo 3 frases. En español."""
+Da exactamente 2 acciones concretas para hoy. Sin headers, sin markdown, sin numeración. Máximo 2 líneas cortas en español."""
 
     headers = {
         "x-api-key":         ANTHROPIC_KEY,
@@ -113,7 +103,7 @@ Sé directo, específico y breve. Máximo 3 frases. En español."""
     }
     body = {
         "model":      "claude-haiku-4-5-20251001",
-        "max_tokens": 200,
+        "max_tokens": 120,
         "messages":   [{"role": "user", "content": prompt}],
     }
     resp = requests.post(
@@ -270,13 +260,12 @@ def main() -> None:
             f"Llamadas:{calls:>5}   Conectadas:{connected:>5}   CVR: {cvr:.1%}",
             f"Tendencia 7d: {trend}",
             "```",
-            f"**🔴 Adsets a revisar/pausar:**",
-            f"```\n{worst_str}\n```",
-            f"**🟢 Adsets a escalar:**",
-            f"```\n{best_str}\n```",
-            f"**💡 Recomendación:**",
-            f"> {advice}",
         ]
+        if worst_str not in ("Sin datos suficientes", "No disponible"):
+            msg_lines += [f"**🔴 Pausar:**", f"```\n{worst_str}\n```"]
+        if best_str not in ("Sin datos suficientes", "No disponible"):
+            msg_lines += [f"**🟢 Escalar:**", f"```\n{best_str}\n```"]
+        msg_lines += [f"**💡** {advice}"]
         msg = "\n".join(msg_lines)
         if len(msg) > 1900:
             msg = msg[:1900] + "\n..."
