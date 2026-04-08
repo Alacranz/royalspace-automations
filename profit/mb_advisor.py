@@ -257,7 +257,7 @@ def main() -> None:
             f"{mention} — **Análisis del día**",
             "```",
             f"Spend:   {fmt(spend):>10}   Profit MB: {fmt(mb_profit):>10}  {status_emoji} {status}",
-            f"Llamadas:{calls:>5}   Conectadas:{connected:>5}   CVR: {cvr:.1%}",
+            f"Llamadas:{calls:>5}   Conectadas:{connected:>5}   Conv:{conversions:>4}   CVR: {cvr:.1%}",
             f"Tendencia 7d: {trend}",
             "```",
         ]
