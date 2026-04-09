@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 import requests
 
 WEBHOOK_URL        = os.environ["DISCORD_WEBHOOK_MOD"]
-WEBHOOK_STATS_URL  = os.environ["WEBHOOK_STATS_URL"]        # https://...railway.app/stats
+_raw_stats_url     = os.environ["WEBHOOK_STATS_URL"]
+WEBHOOK_STATS_URL  = _raw_stats_url if _raw_stats_url.startswith("http") else f"https://{_raw_stats_url}"
 RAILWAY_TOKEN      = os.environ.get("RAILWAY_TOKEN", "")
 ANTHROPIC_BALANCE  = float(os.environ.get("ANTHROPIC_BALANCE") or "50.20")
 
