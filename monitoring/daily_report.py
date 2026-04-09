@@ -90,35 +90,52 @@ def get_railway_credits() -> dict:
 # ── 3. GitHub Actions usage ──────────────────────────────────────────────────
 
 def get_github_usage() -> dict:
+    """Calcula minutos de GitHub Actions sumando duración de runs del mes actual."""
     token = os.environ.get("GH_BILLING_TOKEN", "")
     owner = os.environ.get("GITHUB_REPO_OWNER", "")
+    repo  = "royalspace-automations"
     if not token or not owner:
         return {"error": "sin token"}
-    # Intenta endpoint de org primero, luego user
-    for url in [
-        f"https://api.github.com/orgs/{owner}/settings/billing/actions",
-        f"https://api.github.com/users/{owner}/settings/billing/actions",
-    ]:
-        try:
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    now = datetime.now(timezone.utc)
+    # Primer día del mes actual
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    try:
+        total_seconds = 0
+        page = 1
+        while True:
             r = requests.get(
-                url,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/vnd.github+json",
-                },
+                f"https://api.github.com/repos/{owner}/{repo}/actions/runs",
+                headers=headers,
+                params={"per_page": 100, "page": page, "created": f">={month_start}"},
                 timeout=15,
             )
-            if r.status_code == 200:
-                data = r.json()
-                return {
-                    "used_minutes":     data.get("total_minutes_used", 0),
-                    "included_minutes": data.get("included_minutes", 2000),
-                    "paid_minutes":     data.get("total_paid_minutes_used", 0),
-                }
-        except Exception as e:
-            return {"error": str(e)}
-    # Cuenta personal sin acceso al billing API — mostrar info estática
-    return {"static": True, "used_minutes": 0, "included_minutes": 2000}
+            if r.status_code != 200:
+                return {"error": f"HTTP {r.status_code}"}
+            runs = r.json().get("workflow_runs", [])
+            if not runs:
+                break
+            for run in runs:
+                total_seconds += run.get("run_duration_ms", 0) / 1000
+            if len(runs) < 100:
+                break
+            page += 1
+
+        used_minutes   = int(total_seconds / 60)
+        included       = 2000
+        return {
+            "used_minutes":     used_minutes,
+            "included_minutes": included,
+            "paid_minutes":     0,
+        }
+    except Exception as e:
+        print(f"[Error] GitHub: {e}")
+        return {"static": True, "used_minutes": 0, "included_minutes": 2000}
 
 
 # ── 4. Componer mensaje Discord ───────────────────────────────────────────────
