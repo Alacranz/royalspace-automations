@@ -112,16 +112,28 @@ def get_github_usage() -> dict:
             r = requests.get(
                 f"https://api.github.com/repos/{owner}/{repo}/actions/runs",
                 headers=headers,
-                params={"per_page": 100, "page": page, "created": f">={month_start}"},
+                params={"per_page": 100, "page": page, "created": f">={month_start}", "status": "completed"},
                 timeout=15,
             )
             if r.status_code != 200:
+                print(f"[GitHub] HTTP {r.status_code}: {r.text[:200]}")
                 return {"error": f"HTTP {r.status_code}"}
-            runs = r.json().get("workflow_runs", [])
+            data = r.json()
+            runs = data.get("workflow_runs", [])
             if not runs:
                 break
             for run in runs:
-                total_seconds += run.get("run_duration_ms", 0) / 1000
+                # run_duration_ms no siempre está — calcular desde created_at/updated_at
+                dur_ms = run.get("run_duration_ms") or 0
+                if not dur_ms:
+                    try:
+                        fmt = "%Y-%m-%dT%H:%M:%SZ"
+                        created = datetime.strptime(run["created_at"], fmt).replace(tzinfo=timezone.utc)
+                        updated = datetime.strptime(run["updated_at"], fmt).replace(tzinfo=timezone.utc)
+                        dur_ms = (updated - created).total_seconds() * 1000
+                    except Exception:
+                        dur_ms = 0
+                total_seconds += dur_ms / 1000
             if len(runs) < 100:
                 break
             page += 1
