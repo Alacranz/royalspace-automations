@@ -10,17 +10,31 @@ Más: RINGBA_API_TOKEN, RINGBA_ACCOUNT_ID, META_ACCESS_TOKEN,
      META_API_VERSION, DISCORD_WEBHOOK_MOD,
      GOOGLE_SERVICE_ACCOUNT_JSON, SPREADSHEET_ID.
 
-Lógica:
-  1. Calcula rango completo del mes.
-  2. Fetcha payout de Ringba y spend de Meta para todo el mes.
-  3. Lee tabla Royal Prime y penalizaciones de asistencia.
-  4. Escribe tabla mensual en hoja "2026" con formato igual al manual.
-  5. Envía confirmación a Discord #mod.
+Columnas hoja "2026":
+  A  Name
+  B  Revenue       — payout Ringba
+  C  Adspent       — gasto Meta (negativo)
+  D  Adspent 50%   = C*50%
+  E  Profit        = B+D
+  F  Spent/plus    = 'Week 2026'!M[última semana mes anterior]
+  G  Spent         — VACÍO (manual: penalizaciones asistencia, etc.)
+  H  Profit/Loss   = E+F+G  (sin prime)
+  I  Royal Prime   — calculado según tabla de revenue
+  J  Profit/Loss   = B+F+G+I+(C*50%)  (con prime)
+  K  —             vacía
+  L  Nota          — manual
+  M  Revenue Dif   = SI(B_prev=0, NOD(), (B-B_prev)/B_prev)
+  N  Profit Dif    = SI(E_prev=0, "N/A", (E-E_prev)/ABS(E_prev))
+  O  Indicador     = ▲ / 🔻 / 🔹
+
+  Q  Revenue       — tabla guía de premios (referencia visual)
+  R  Royal Prime   — idem
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from calendar import monthrange
 from datetime import datetime, timezone
@@ -35,15 +49,15 @@ from common.ringba_client  import get_publisher_summary, normalize_name
 from common.sheets_client  import get_spreadsheet
 
 # ── Secretos ──────────────────────────────────────────────────────────────────
-RINGBA_TOKEN  = os.environ["RINGBA_API_TOKEN"]
+RINGBA_TOKEN   = os.environ["RINGBA_API_TOKEN"]
 RINGBA_ACCOUNT = os.environ["RINGBA_ACCOUNT_ID"]
-META_TOKEN    = os.environ["META_ACCESS_TOKEN"]
-META_VERSION  = os.environ.get("META_API_VERSION") or "v25.0"
-WEBHOOK_MOD   = os.environ["DISCORD_WEBHOOK_MOD"]
-MONTH_STR     = os.environ["MONTH"]   # MM/YYYY
+META_TOKEN     = os.environ["META_ACCESS_TOKEN"]
+META_VERSION   = os.environ.get("META_API_VERSION") or "v25.0"
+WEBHOOK_MOD    = os.environ["DISCORD_WEBHOOK_MOD"]
+MONTH_STR      = os.environ["MONTH"]   # MM/YYYY
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
-VET = pytz.timezone("America/Caracas")   # UTC-4, igual que Ringba UI
+VET = pytz.timezone("America/Caracas")
 EST = pytz.timezone("America/New_York")
 
 # ── Orden fijo de Media Buyers ─────────────────────────────────────────────────
@@ -58,28 +72,47 @@ MB_ORDER = [
     {"sheet_name": "Caribay",   "config_display": "Caribay Flores"},
 ]
 
-# ── Columnas (1-based) — igual que FEB manual ─────────────────────────────────
-COL_NAME       = 1   # A
-COL_REVENUE    = 2   # B — payout de Ringba
-COL_ADSPENT    = 3   # C — gasto Meta (negativo)
-COL_ADSPENT50  = 4   # D = C*50%
-COL_PROFIT     = 5   # E = B+D
-COL_SPENTPLUS  = 6   # F — vacío en mensual
-COL_SPENT      = 7   # G — penalidad asistencia
-COL_ROYALPRIME = 8   # H — Royal Prime
-COL_PROFITLOSS = 9   # I = B+F+G+H+(C*50%)
-COL_NOTA       = 10  # J — manual (sin bordes)
-COL_REVDIF     = 11  # K — Revenue Dif vs mes anterior
-COL_PROFITDIF  = 12  # L — Profit Dif vs mes anterior
-TOTAL_COLS     = 12
+# ── Columnas (1-based) ────────────────────────────────────────────────────────
+COL_NAME             = 1   # A
+COL_REVENUE          = 2   # B
+COL_ADSPENT          = 3   # C
+COL_ADSPENT50        = 4   # D
+COL_PROFIT           = 5   # E
+COL_SPENTPLUS        = 6   # F  ← 'Week 2026'!M[row]
+COL_SPENT            = 7   # G  ← vacío/manual
+COL_PROFITLOSS_NOPRIME = 8 # H  = E+F+G
+COL_ROYALPRIME       = 9   # I
+COL_PROFITLOSS       = 10  # J  = B+F+G+I+(C*50%)
+COL_EMPTY            = 11  # K  ← vacía
+COL_NOTA             = 12  # L  ← manual
+COL_REVDIF           = 13  # M
+COL_PROFITDIF        = 14  # N
+COL_INDICATOR        = 15  # O
+TOTAL_COLS           = 15
+
+# Tabla guía de premios — columnas Q y R (17 y 18)
+COL_PRIZE_REV   = 17  # Q
+COL_PRIZE_PRIME = 18  # R
+
+# ── Tabla de Royal Prime ───────────────────────────────────────────────────────
+PRIME_TABLE = [
+    (500,  50),
+    (1000, 100),
+    (1500, 150),
+    (2000, 200),
+    (2500, 250),
+    (3000, 300),
+    (3500, 350),
+    (4000, 400),
+]
 
 # ── Colores ───────────────────────────────────────────────────────────────────
-C_HEADER  = {"red": 0.122, "green": 0.286, "blue": 0.490}   # #1F497D azul oscuro
-C_DATA    = {"red": 0.812, "green": 0.886, "blue": 0.953}   # #CFE2F3 celeste
-C_WHITE   = {"red": 1.0,   "green": 1.0,   "blue": 1.0}
-C_BLACK   = {"red": 0.0,   "green": 0.0,   "blue": 0.0}
-C_GOLD    = {"red": 1.0,   "green": 0.843, "blue": 0.0}     # #FFD700
-C_GRAY    = {"red": 0.3,   "green": 0.3,   "blue": 0.3}
+C_HEADER = {"red": 0.122, "green": 0.286, "blue": 0.490}  # #1F497D
+C_DATA   = {"red": 0.812, "green": 0.886, "blue": 0.953}  # #CFE2F3
+C_WHITE  = {"red": 1.0,   "green": 1.0,   "blue": 1.0}
+C_BLACK  = {"red": 0.0,   "green": 0.0,   "blue": 0.0}
+C_GOLD   = {"red": 1.0,   "green": 0.843, "blue": 0.0}
+C_GRAY   = {"red": 0.3,   "green": 0.3,   "blue": 0.3}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -87,13 +120,11 @@ C_GRAY    = {"red": 0.3,   "green": 0.3,   "blue": 0.3}
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def parse_month() -> tuple[int, int]:
-    """Parsea MONTH (MM/YYYY) → (month, year)."""
     parts = MONTH_STR.strip().split("/")
     return int(parts[0]), int(parts[1])
 
 
 def month_utc_range(year: int, month: int):
-    """UTC range del mes completo en VET (igual que Ringba UI)."""
     days  = monthrange(year, month)[1]
     start = VET.localize(datetime(year, month, 1,    0,  0,  0)).astimezone(timezone.utc)
     end   = VET.localize(datetime(year, month, days, 23, 59, 59)).astimezone(timezone.utc)
@@ -120,6 +151,16 @@ def grid_range(sheet_id: int, r1: int, c1: int, r2: int, c2: int) -> dict:
         "startColumnIndex": c1 - 1,
         "endColumnIndex":   c2,
     }
+
+
+def get_royal_prime(revenue: float) -> float:
+    """Retorna el Royal Prime correspondiente al revenue del mes."""
+    prime = 0.0
+    for threshold, amount in sorted(PRIME_TABLE, key=lambda x: x[0], reverse=True):
+        if revenue >= threshold:
+            prime = amount
+            break
+    return prime
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -149,9 +190,9 @@ def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
 
 
 def fetch_meta_spends(year: int, month: int, mb_config: dict) -> dict[str, float]:
-    days    = monthrange(year, month)[1]
-    since   = f"{year}-{month:02d}-01"
-    until   = f"{year}-{month:02d}-{days:02d}"
+    days  = monthrange(year, month)[1]
+    since = f"{year}-{month:02d}-01"
+    until = f"{year}-{month:02d}-{days:02d}"
     spend_map: dict[str, float] = {}
     for mb in MB_ORDER:
         cfg   = mb_config.get(mb["config_display"]) or {}
@@ -167,85 +208,75 @@ def fetch_meta_spends(year: int, month: int, mb_config: dict) -> dict[str, float
     return spend_map
 
 
-def read_royal_prime_table(spreadsheet) -> list[tuple[float, float]]:
-    fallback = [
-        (500, 50), (1000, 100), (1500, 150), (2000, 200),
-        (2500, 250), (3000, 300), (3500, 350), (4000, 400),
-    ]
-    try:
-        ws   = spreadsheet.worksheet("2026")
-        vals = ws.get_all_values()
-        rev_col = prime_col = header_row = None
-        for r_idx, row in enumerate(vals):
-            for c_idx, cell in enumerate(row):
-                s = str(cell).strip().lower()
-                if s == "revenue":
-                    rev_col    = c_idx
-                if s == "royal prime":
-                    prime_col  = c_idx
-                    header_row = r_idx
-            if rev_col is not None and prime_col is not None and header_row is not None:
-                table = []
-                for data_row in vals[header_row + 1:]:
-                    if len(data_row) <= max(rev_col, prime_col):
-                        break
-                    r_str = data_row[rev_col].replace("$", "").replace(",", "").strip()
-                    p_str = data_row[prime_col].replace("$", "").replace(",", "").strip()
-                    if not r_str and not p_str:
-                        break
-                    try:
-                        table.append((float(r_str), float(p_str)))
-                    except ValueError:
-                        break
-                if table:
-                    return sorted(table, key=lambda x: x[0])
-                break
-    except Exception as e:
-        print(f"Advertencia Royal Prime table: {e}. Usando fallback.")
-    return fallback
-
-
-def get_royal_prime(monthly_payout: float, prime_table: list) -> float:
-    prime = 0.0
-    for threshold, amount in sorted(prime_table, key=lambda x: x[0], reverse=True):
-        if monthly_payout >= threshold:
-            prime = amount
-            break
-    return prime
-
-
-def read_sistema_datos(spreadsheet) -> dict[str, float]:
-    result = {mb["sheet_name"]: 0.0 for mb in MB_ORDER}
-    try:
-        ws   = spreadsheet.worksheet("SISTEMA_DATOS")
-        rows = ws.get_all_values()
-        for row in rows:
-            if len(row) < 2:
-                continue
-            name    = str(row[0]).strip()
-            pen_str = str(row[1]).strip().replace("$", "").replace(",", "")
-            if name in result:
-                try:
-                    result[name] = float(pen_str)
-                except ValueError:
-                    pass
-    except Exception as e:
-        print(f"Advertencia SISTEMA_DATOS: {e}. Penalizaciones = 0.")
-    return result
-
-
-def find_prev_month_mb_rows(ws) -> dict[str, int]:
+def find_prev_month_pagado_rows(ws_weekly, year: int, month: int) -> dict[str, int]:
     """
-    Escanea columna A de la hoja '2026' y retorna el último row de cada MB.
-    Usado para Revenue Dif / Profit Dif vs mes anterior.
+    Busca en 'Week 2026' los rows de cada MB en la ÚLTIMA semana del mes anterior.
+    Retorna {sheet_name → row_number} para usar en la fórmula F = 'Week 2026'!M[row].
+
+    Col M en la hoja semanal = COL_PAGADO (pagado, columna 13).
+    """
+    prev_month = month - 1
+    prev_year  = year
+    if prev_month == 0:
+        prev_month = 12
+        prev_year -= 1
+
+    mb_names      = {mb["sheet_name"] for mb in MB_ORDER}
+    col_a         = ws_weekly.col_values(1)
+    date_pattern  = re.compile(r'\d{2}/\d{2}/\d{2}\s*[-–]\s*\d{2}/\d{2}/\d{2}')
+
+    # Encontrar filas de encabezado de fecha y sus índices
+    table_starts = []
+    for idx, val in enumerate(col_a):
+        if date_pattern.match(str(val).strip()):
+            table_starts.append(idx + 1)   # 1-based
+
+    # Buscar la última tabla que pertenezca al mes anterior
+    for start_row in reversed(table_starts):
+        header_val = str(col_a[start_row - 1]).strip()
+        # Parsear fecha final: "DD/MM/YY - DD/MM/YY"
+        parts = re.split(r'\s*[-–]\s*', header_val)
+        if len(parts) < 2:
+            continue
+        end_str = parts[-1].strip()
+        try:
+            end_date = datetime.strptime(end_str, "%d/%m/%y")
+        except ValueError:
+            continue
+        if end_date.month != prev_month or end_date.year != prev_year:
+            continue
+
+        # Tabla del mes anterior encontrada — leer filas de MB
+        result = {}
+        for i in range(start_row + 2, start_row + 2 + len(MB_ORDER) + 3):
+            if i - 1 >= len(col_a):
+                break
+            cell = str(col_a[i - 1]).strip()
+            if cell in mb_names:
+                result[cell] = i
+        if result:
+            print(f"  [Weekly] Última semana de {prev_month:02d}/{prev_year} "
+                  f"encontrada en fila {start_row}. Rows pagado: {result}")
+            return result
+
+    print(f"  [Weekly] Advertencia: no se encontró tabla de "
+          f"{prev_month:02d}/{prev_year}. F quedará vacío.")
+    return {}
+
+
+def find_prev_month_mb_rows_in_2026(ws_2026) -> dict[str, int]:
+    """
+    Busca en la hoja '2026' el último row de cada MB (mes anterior).
+    Retorna {sheet_name → row_number} para Revenue Dif y Profit Dif.
     """
     mb_names = {mb["sheet_name"] for mb in MB_ORDER}
-    col_a    = ws.col_values(1)
+    col_a    = ws_2026.col_values(1)
     result   = {}
     for idx, val in enumerate(col_a):
         cell = str(val).strip()
         if cell in mb_names:
-            result[cell] = idx + 1   # 1-based
+            result[cell] = idx + 1   # 1-based (última ocurrencia = mes anterior)
+    print(f"  [2026] Rows mes anterior: {result}")
     return result
 
 
@@ -257,68 +288,80 @@ def build_table(
     month_label: str,
     mb_data: list[dict],
     start_row: int,
-    prev_mb_rows: dict[str, int],
+    prev_2026_rows: dict[str, int],
+    prev_weekly_rows: dict[str, int],
 ) -> list[list]:
     """
-    Construye matriz de filas para la hoja '2026'.
-    Estructura (12 cols):
-      A  B        C        D           E       F          G      H           I            J     K           L
-      Name Revenue Adspent Adspent50%  Profit  Spent/plus Spent  RoyalPrime  Profit/Loss  Nota  RevenueDif  ProfitDif
+    Construye la matriz de valores para la hoja '2026'.
     """
-    # ── Header fila 1: rango de mes + sub-etiquetas ───────────────────────────
+    # ── Header fila 1 ─────────────────────────────────────────────────────────
     h1 = [""] * TOTAL_COLS
-    h1[COL_NAME      - 1] = month_label
-    h1[COL_ADSPENT   - 1] = "total"
-    h1[COL_ADSPENT50 - 1] = "50%"
+    h1[COL_NAME       - 1] = month_label
+    h1[COL_ADSPENT    - 1] = "total"
+    h1[COL_ADSPENT50  - 1] = "50%"
     h1[COL_ROYALPRIME - 1] = "Winner"
 
-    # ── Header fila 2: nombres de columnas ────────────────────────────────────
+    # ── Header fila 2 ─────────────────────────────────────────────────────────
     h2 = [""] * TOTAL_COLS
-    h2[COL_NAME       - 1] = "Name"
-    h2[COL_REVENUE    - 1] = "Revenue"
-    h2[COL_ADSPENT    - 1] = "Adspent"
-    h2[COL_ADSPENT50  - 1] = "Adspent 50%"
-    h2[COL_PROFIT     - 1] = "Profit"
-    h2[COL_SPENTPLUS  - 1] = "Spent/plus"
-    h2[COL_SPENT      - 1] = "Spent"
-    h2[COL_ROYALPRIME - 1] = "Royal Prime"
-    h2[COL_PROFITLOSS - 1] = "Profit/Loss"
-    h2[COL_NOTA       - 1] = "Nota"
-    h2[COL_REVDIF     - 1] = "Revenue Dif"
-    h2[COL_PROFITDIF  - 1] = "Profit Dif"
+    h2[COL_NAME              - 1] = "Name"
+    h2[COL_REVENUE           - 1] = "Revenue"
+    h2[COL_ADSPENT           - 1] = "Adspent"
+    h2[COL_ADSPENT50         - 1] = "Adspent 50%"
+    h2[COL_PROFIT            - 1] = "Profit"
+    h2[COL_SPENTPLUS         - 1] = "Spent/plus"
+    h2[COL_SPENT             - 1] = "Spent"
+    h2[COL_PROFITLOSS_NOPRIME - 1] = "Profit / Loss"
+    h2[COL_ROYALPRIME        - 1] = "Royal Prime"
+    h2[COL_PROFITLOSS        - 1] = "Profit / Loss"
+    h2[COL_NOTA              - 1] = "Nota"
+    h2[COL_REVDIF            - 1] = "Revenue Dif"
+    h2[COL_PROFITDIF         - 1] = "Profit Dif"
 
     # ── Filas de MB ───────────────────────────────────────────────────────────
     data_rows = []
     for i, mb in enumerate(mb_data):
-        row_n = start_row + 2 + i   # +2: header1 + header2
+        row_n = start_row + 2 + i
 
         B = cr(row_n, COL_REVENUE)
         C = cr(row_n, COL_ADSPENT)
         D = cr(row_n, COL_ADSPENT50)
+        E = cr(row_n, COL_PROFIT)
         F = cr(row_n, COL_SPENTPLUS)
         G = cr(row_n, COL_SPENT)
-        H = cr(row_n, COL_ROYALPRIME)
-        E = cr(row_n, COL_PROFIT)
+        I = cr(row_n, COL_ROYALPRIME)
+
+        # F: referencia a pagado (col M=13) de la última semana del mes anterior
+        weekly_row = prev_weekly_rows.get(mb["name"])
+        if weekly_row:
+            f_val = f"='Week 2026'!M{weekly_row}"
+        else:
+            f_val = ""
 
         row = [""] * TOTAL_COLS
-        row[COL_NAME       - 1] = mb["name"]
-        row[COL_REVENUE    - 1] = mb["payout"]
-        row[COL_ADSPENT    - 1] = -mb["spend"]        # negativo (convención contable)
-        row[COL_ADSPENT50  - 1] = f"={C}*50%"
-        row[COL_PROFIT     - 1] = f"={B}+{D}"
-        row[COL_SPENTPLUS  - 1] = ""                  # vacío en mensual
-        row[COL_SPENT      - 1] = mb.get("attendance_penalty") or ""
-        row[COL_ROYALPRIME - 1] = mb.get("royal_prime") or ""
-        row[COL_PROFITLOSS - 1] = f"={B}+{F}+{G}+{H}+({C}*50%)"
-        row[COL_NOTA       - 1] = ""                  # manual
+        row[COL_NAME              - 1] = mb["name"]
+        row[COL_REVENUE           - 1] = mb["payout"]
+        row[COL_ADSPENT           - 1] = -mb["spend"]           # negativo
+        row[COL_ADSPENT50         - 1] = f"={C}*50%"
+        row[COL_PROFIT            - 1] = f"={B}+{D}"
+        row[COL_SPENTPLUS         - 1] = f_val
+        row[COL_SPENT             - 1] = ""                      # vacío/manual
+        row[COL_PROFITLOSS_NOPRIME - 1] = f"={E}+{F}+{G}"       # sin prime
+        row[COL_ROYALPRIME        - 1] = mb.get("royal_prime") or ""
+        row[COL_PROFITLOSS        - 1] = f"={B}+{F}+{G}+{I}+({C}*50%)"  # con prime
+        row[COL_EMPTY             - 1] = ""                      # K vacía
+        row[COL_NOTA              - 1] = ""                      # manual
 
-        # Revenue Dif / Profit Dif vs mes anterior
-        prev_row = prev_mb_rows.get(mb["name"])
+        # Revenue Dif y Profit Dif vs mes anterior
+        prev_row = prev_2026_rows.get(mb["name"])
         if prev_row:
             prev_B = cr(prev_row, COL_REVENUE)
             prev_E = cr(prev_row, COL_PROFIT)
             row[COL_REVDIF    - 1] = f"=SI({prev_B}=0,NOD(),({B}-{prev_B})/{prev_B})"
             row[COL_PROFITDIF - 1] = f'=SI({prev_E}=0,"N/A",({E}-{prev_E})/ABS({prev_E}))'
+            N_ref = cr(row_n, COL_PROFITDIF)
+            row[COL_INDICATOR - 1] = (
+                f'=SI(ESNOD({N_ref}),"",SI({N_ref}>0,"▲",SI({N_ref}<0,"🔻","🔹")))'
+            )
 
         data_rows.append(row)
 
@@ -331,17 +374,29 @@ def build_table(
         return f"=SUMA({cr(mb_s, col)}:{cr(mb_e, col)})"
 
     total = [""] * TOTAL_COLS
-    total[COL_NAME       - 1] = "TOTAL"
-    total[COL_REVENUE    - 1] = s(COL_REVENUE)
-    total[COL_ADSPENT    - 1] = s(COL_ADSPENT)
-    total[COL_ADSPENT50  - 1] = s(COL_ADSPENT50)
-    total[COL_PROFIT     - 1] = s(COL_PROFIT)
-    total[COL_SPENTPLUS  - 1] = s(COL_SPENTPLUS)
-    total[COL_SPENT      - 1] = s(COL_SPENT)
-    total[COL_ROYALPRIME - 1] = s(COL_ROYALPRIME)
-    total[COL_PROFITLOSS - 1] = s(COL_PROFITLOSS)
+    total[COL_NAME              - 1] = "TOTAL"
+    total[COL_REVENUE           - 1] = s(COL_REVENUE)
+    total[COL_ADSPENT           - 1] = s(COL_ADSPENT)
+    total[COL_ADSPENT50         - 1] = s(COL_ADSPENT50)
+    total[COL_PROFIT            - 1] = s(COL_PROFIT)
+    total[COL_SPENTPLUS         - 1] = s(COL_SPENTPLUS)
+    total[COL_SPENT             - 1] = s(COL_SPENT)
+    total[COL_PROFITLOSS_NOPRIME - 1] = s(COL_PROFITLOSS_NOPRIME)
+    total[COL_ROYALPRIME        - 1] = s(COL_ROYALPRIME)
+    total[COL_PROFITLOSS        - 1] = s(COL_PROFITLOSS)
 
     return [h1, h2] + data_rows + [total]
+
+
+def build_prize_table() -> list[list]:
+    """
+    Construye la tabla guía de premios para columnas Q-R.
+    Headers en fila start_row, datos debajo.
+    """
+    rows = [["Revenue", "Royal Prime"]]
+    for rev, prime in PRIME_TABLE:
+        rows.append([rev, prime])
+    return rows
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -349,12 +404,12 @@ def build_table(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int) -> None:
-    sheet_id  = ws.id
-    row_date  = start_row
-    row_cols  = start_row + 1
-    row_mb_s  = start_row + 2
-    row_mb_e  = start_row + 2 + mb_count - 1
-    row_tot   = start_row + 2 + mb_count
+    sheet_id = ws.id
+    row_date = start_row
+    row_cols = start_row + 1
+    row_mb_s = start_row + 2
+    row_mb_e = start_row + 2 + mb_count - 1
+    row_tot  = start_row + 2 + mb_count
 
     currency_fmt = {"type": "NUMBER", "pattern": "$#,##0.00;[RED]-$#,##0.00"}
     pct_fmt      = {"type": "NUMBER", "pattern": "0.00%;[RED]-0.00%"}
@@ -386,34 +441,39 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int) -> None:
 
     reqs = []
 
-    # ── Colores de filas ──────────────────────────────────────────────────────
-    # Header fecha: A–I y K–L coloreados; J (Nota) blanco
-    reqs.append(fmt_req(row_date, 1,  row_date, 9,           C_HEADER, C_WHITE, True))
-    reqs.append(fmt_req(row_date, 10, row_date, 10,          C_WHITE,  None,    None))
-    reqs.append(fmt_req(row_date, 11, row_date, TOTAL_COLS,  C_HEADER, C_WHITE, True))
+    # ── Colores ───────────────────────────────────────────────────────────────
+    # Rango principal A–J (1–10) + M–O (13–15) coloreados; K(11) y L(12) blanco
 
-    # Header columnas: A–I y K–L coloreados; J blanco
-    reqs.append(fmt_req(row_cols, 1,  row_cols, 9,           C_HEADER, C_WHITE, True))
-    reqs.append(fmt_req(row_cols, 10, row_cols, 10,          C_WHITE,  None,    None))
-    reqs.append(fmt_req(row_cols, 11, row_cols, TOTAL_COLS,  C_HEADER, C_WHITE, True))
+    # Fila de fecha
+    reqs.append(fmt_req(row_date, 1,  row_date, 10,         C_HEADER, C_WHITE, True))
+    reqs.append(fmt_req(row_date, 11, row_date, 12,         C_WHITE,  None,    None))
+    reqs.append(fmt_req(row_date, 13, row_date, TOTAL_COLS, C_HEADER, C_WHITE, True))
+
+    # Fila de columnas
+    reqs.append(fmt_req(row_cols, 1,  row_cols, 10,         C_HEADER, C_WHITE, True))
+    reqs.append(fmt_req(row_cols, 11, row_cols, 12,         C_WHITE,  None,    None))
+    reqs.append(fmt_req(row_cols, 13, row_cols, TOTAL_COLS, C_HEADER, C_WHITE, True))
 
     # Royal Prime header → dorado
     reqs.append(fmt_req(row_cols, COL_ROYALPRIME, row_cols, COL_ROYALPRIME,
                         C_HEADER, C_GOLD, True))
 
-    # Filas MB: celeste A–I y K–L; J blanco
-    reqs.append(fmt_req(row_mb_s, 1,  row_mb_e, 9,           C_DATA,  C_BLACK, False))
-    reqs.append(fmt_req(row_mb_s, 10, row_mb_e, 10,          C_WHITE, None,    None))
-    reqs.append(fmt_req(row_mb_s, 11, row_mb_e, TOTAL_COLS,  C_DATA,  C_BLACK, False))
+    # Filas MB
+    reqs.append(fmt_req(row_mb_s, 1,  row_mb_e, 10,         C_DATA,  C_BLACK, False))
+    reqs.append(fmt_req(row_mb_s, 11, row_mb_e, 12,         C_WHITE, None,    None))
+    reqs.append(fmt_req(row_mb_s, 13, row_mb_e, TOTAL_COLS, C_DATA,  C_BLACK, False))
 
-    # Fila TOTAL: A–I y K–L coloreados; J blanco
-    reqs.append(fmt_req(row_tot, 1,  row_tot, 9,             C_HEADER, C_WHITE, True))
-    reqs.append(fmt_req(row_tot, 10, row_tot, 10,            C_WHITE,  None,    None))
-    reqs.append(fmt_req(row_tot, 11, row_tot, TOTAL_COLS,    C_HEADER, C_WHITE, True))
+    # Fila TOTAL
+    reqs.append(fmt_req(row_tot, 1,  row_tot, 10,           C_HEADER, C_WHITE, True))
+    reqs.append(fmt_req(row_tot, 11, row_tot, 12,           C_WHITE,  None,    None))
+    reqs.append(fmt_req(row_tot, 13, row_tot, TOTAL_COLS,   C_HEADER, C_WHITE, True))
 
     # ── Formato numérico ──────────────────────────────────────────────────────
-    currency_cols = [COL_REVENUE, COL_ADSPENT, COL_ADSPENT50, COL_PROFIT,
-                     COL_SPENTPLUS, COL_SPENT, COL_ROYALPRIME, COL_PROFITLOSS]
+    currency_cols = [
+        COL_REVENUE, COL_ADSPENT, COL_ADSPENT50, COL_PROFIT,
+        COL_SPENTPLUS, COL_SPENT, COL_PROFITLOSS_NOPRIME,
+        COL_ROYALPRIME, COL_PROFITLOSS,
+    ]
     for col in currency_cols:
         reqs.append({
             "repeatCell": {
@@ -432,29 +492,28 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int) -> None:
         })
 
     # ── Bordes ────────────────────────────────────────────────────────────────
-    # Tabla principal A–I
+    # Tabla principal A–J
     reqs.append({
         "updateBorders": {
-            "range":           grid_range(sheet_id, row_date, 1, row_tot, 9),
-            "top":             border, "bottom": border,
-            "left":            border, "right":  border,
+            "range":           grid_range(sheet_id, row_date, 1, row_tot, 10),
+            "top": border, "bottom": border, "left": border, "right": border,
             "innerHorizontal": border, "innerVertical": border,
         }
     })
-    # J (Nota) — sin bordes
+    # K–L sin bordes
     reqs.append({
         "updateBorders": {
-            "range": grid_range(sheet_id, row_date, 10, row_tot, 10),
+            "range": grid_range(sheet_id, row_date, 11, row_tot, 12),
             "top": no_border, "bottom": no_border,
             "left": no_border, "right": no_border,
+            "innerHorizontal": no_border, "innerVertical": no_border,
         }
     })
-    # K–L (Revenue Dif, Profit Dif)
+    # M–O (Revenue Dif, Profit Dif, Indicator)
     reqs.append({
         "updateBorders": {
-            "range":           grid_range(sheet_id, row_date, 11, row_tot, TOTAL_COLS),
-            "top":             border, "bottom": border,
-            "left":            border, "right":  border,
+            "range":           grid_range(sheet_id, row_date, 13, row_tot, TOTAL_COLS),
+            "top": border, "bottom": border, "left": border, "right": border,
             "innerHorizontal": border, "innerVertical": border,
         }
     })
@@ -492,14 +551,21 @@ def main() -> None:
     print("Consultando Meta...")
     spends  = fetch_meta_spends(year, month, mb_config)
 
-    # ── 4. Royal Prime y asistencia ───────────────────────────────────────────
+    # ── 4. Google Sheets ──────────────────────────────────────────────────────
     print("Conectando con Google Sheets...")
     spreadsheet = get_spreadsheet()
 
-    prime_table    = read_royal_prime_table(spreadsheet)
-    attendance_map = read_sistema_datos(spreadsheet)
-    print(f"Royal Prime table: {prime_table}")
-    print(f"Penalizaciones: {attendance_map}")
+    # Hoja semanal: última semana del mes anterior (para columna F)
+    ws_weekly = spreadsheet.worksheet("Week 2026")
+    prev_weekly_rows = find_prev_month_pagado_rows(ws_weekly, year, month)
+
+    # Hoja 2026: mes anterior (para Revenue Dif y Profit Dif)
+    try:
+        ws_2026 = spreadsheet.worksheet("2026")
+    except Exception:
+        ws_2026 = spreadsheet.add_worksheet("2026", rows=500, cols=20)
+
+    prev_2026_rows = find_prev_month_mb_rows_in_2026(ws_2026)
 
     # ── 5. Construir datos por MB ─────────────────────────────────────────────
     mb_data = []
@@ -509,50 +575,46 @@ def main() -> None:
         ad_id   = cfg.get("facebook_ad_account_id") or ""
         payout  = payouts.get(pub_key, 0.0)
         spend   = spends.get(ad_id, 0.0)
-        prime   = get_royal_prime(payout, prime_table)
-        penalty = attendance_map.get(mb["sheet_name"], 0.0)
+        prime   = get_royal_prime(payout)
 
         print(f"  {mb['sheet_name']}: payout=${payout:.2f}  spend=${spend:.2f}  "
-              f"prime=${prime:.0f}  penalty=${penalty:.2f}")
+              f"prime=${prime:.0f}")
 
         mb_data.append({
-            "name":               mb["sheet_name"],
-            "payout":             payout,
-            "spend":              spend,
-            "royal_prime":        prime if prime > 0 else "",
-            "attendance_penalty": penalty if penalty != 0 else "",
+            "name":        mb["sheet_name"],
+            "payout":      payout,
+            "spend":       spend,
+            "royal_prime": prime if prime > 0 else "",
         })
 
-    # ── 6. Leer hoja "2026" ───────────────────────────────────────────────────
-    try:
-        ws_2026 = spreadsheet.worksheet("2026")
-    except Exception:
-        ws_2026 = spreadsheet.add_worksheet("2026", rows=500, cols=15)
-
-    # Encontrar última fila con datos y rows de mes anterior por MB
-    prev_mb_rows = find_prev_month_mb_rows(ws_2026)
-    print(f"Rows mes anterior: {prev_mb_rows}")
-
+    # ── 6. Determinar fila de inicio ──────────────────────────────────────────
     col_a    = ws_2026.col_values(1)
     last_row = max((i + 1 for i, v in enumerate(col_a) if str(v).strip()), default=0)
     start_row = last_row + 3 if last_row > 0 else 1
     print(f"Última fila con datos: {last_row}  →  nueva tabla en fila {start_row}")
 
-    # ── 7. Escribir tabla ─────────────────────────────────────────────────────
-    all_rows = build_table(month_label, mb_data, start_row, prev_mb_rows)
+    # ── 7. Escribir tabla principal ───────────────────────────────────────────
+    all_rows = build_table(month_label, mb_data, start_row, prev_2026_rows, prev_weekly_rows)
     end_row  = start_row + len(all_rows) - 1
     rng      = f"A{start_row}:{col_letter(TOTAL_COLS)}{end_row}"
     ws_2026.update(range_name=rng, values=all_rows, value_input_option="USER_ENTERED")
-    print(f"Valores escritos en {rng}")
+    print(f"Tabla escrita en {rng}")
 
-    # ── 8. Formato ────────────────────────────────────────────────────────────
+    # ── 8. Escribir tabla guía de premios (Q-R) ───────────────────────────────
+    prize_rows = build_prize_table()
+    prize_end  = start_row + len(prize_rows) - 1
+    prize_rng  = f"Q{start_row}:R{prize_end}"
+    ws_2026.update(range_name=prize_rng, values=prize_rows, value_input_option="USER_ENTERED")
+    print(f"Tabla de premios escrita en {prize_rng}")
+
+    # ── 9. Formato ────────────────────────────────────────────────────────────
     apply_formatting(spreadsheet, ws_2026, start_row, len(mb_data))
     print("Formato aplicado")
 
-    # ── 9. Discord ────────────────────────────────────────────────────────────
+    # ── 10. Discord ───────────────────────────────────────────────────────────
     msg = (
-        f"✅ **Contabilidad mensual completada: {month_names[month]} {year}**\n"
-        f"Tabla escrita en la hoja '2026' — revisa Revenue Dif y Profit Dif."
+        f"✅ **Contabilidad mensual: {month_names[month]} {year}**\n"
+        f"Tabla escrita en hoja '2026' — columna G (Spent) queda vacía para ingreso manual."
     )
     discord_send(WEBHOOK_MOD, msg)
     print("OK — confirmación enviada a Discord #mod")
