@@ -182,7 +182,9 @@ def load_mb_config() -> dict:
 
 
 def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
-    pub_map = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
+    # exclude_duplicates=True para coincidir con la UI de Ringba Publisher Summary
+    pub_map = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc,
+                                    exclude_duplicates=True)
     result  = {key: data["payout"] for key, data in pub_map.items()}
     print("  [Ringba] Payouts:")
     for k, v in sorted(result.items(), key=lambda x: -x[1]):
@@ -240,12 +242,14 @@ def find_prev_month_pagado_rows(ws_weekly, year: int, month: int) -> dict[str, i
         parts = re.split(r'\s*[-–]\s*', header_val)
         if len(parts) < 2:
             continue
-        end_str = parts[-1].strip()
+        start_str = parts[0].strip()
         try:
-            end_date = datetime.strptime(end_str, "%d/%m/%y")
+            start_date = datetime.strptime(start_str, "%d/%m/%y")
         except ValueError:
             continue
-        if end_date.month != prev_month or end_date.year != prev_year:
+        # Comparar por fecha de INICIO: la última semana que empieza en el mes anterior
+        # (cubre semanas que cruzan meses, ej: 24/02 – 01/03)
+        if start_date.month != prev_month or start_date.year != prev_year:
             continue
 
         # Tabla del mes anterior encontrada — leer filas de MB
@@ -413,6 +417,20 @@ def build_table(
     total[COL_ROYALPRIME        - 1] = s(COL_ROYALPRIME)
     total[COL_PROFITLOSS        - 1] = s(COL_PROFITLOSS)
 
+    # Revenue Dif y Profit Dif del TOTAL vs. el TOTAL del mes anterior
+    if prev_2026_rows:
+        prev_total_row = max(prev_2026_rows.values()) + 1  # TOTAL = última fila MB + 1
+        prev_B = cr(prev_total_row, COL_REVENUE)
+        prev_E = cr(prev_total_row, COL_PROFIT)
+        tot_B  = cr(tot_row_n,      COL_REVENUE)
+        tot_E  = cr(tot_row_n,      COL_PROFIT)
+        total[COL_REVDIF    - 1] = f"=SI({prev_B}=0,NOD(),({tot_B}-{prev_B})/{prev_B})"
+        total[COL_PROFITDIF - 1] = f'=SI({prev_E}=0,"N/A",({tot_E}-{prev_E})/ABS({prev_E}))'
+        N_ref  = cr(tot_row_n, COL_PROFITDIF)
+        total[COL_INDICATOR - 1] = (
+            f'=SI(ESNOD({N_ref}),"",SI({N_ref}>0,"▲",SI({N_ref}<0,"🔻","🔹")))'
+        )
+
     return [h1, h2] + data_rows + [total]
 
 
@@ -473,10 +491,9 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
     # ── Colores ───────────────────────────────────────────────────────────────
     # Rango principal A–J (1–10) + M–O (13–15) coloreados; K(11) y L(12) blanco
 
-    # Fila de fecha
+    # Fila de fecha: solo col A con fondo; B–O sin fondo (igual que FEB manual)
     reqs.append(fmt_req(row_date, 1,  row_date, 10,         C_HEADER, C_WHITE, True))
-    reqs.append(fmt_req(row_date, 11, row_date, 12,         C_WHITE,  None,    None))
-    reqs.append(fmt_req(row_date, 13, row_date, TOTAL_COLS, C_HEADER, C_WHITE, True))
+    reqs.append(fmt_req(row_date, 11, row_date, TOTAL_COLS, C_WHITE,  None,    None))
 
     # Fila de columnas
     reqs.append(fmt_req(row_cols, 1,  row_cols, 10,         C_HEADER, C_WHITE, True))
@@ -624,7 +641,7 @@ def apply_attendance_notes(spreadsheet, ws, start_row: int, mb_data: list[dict])
                     "startColumnIndex": COL_SPENT - 1,
                     "endColumnIndex":   COL_SPENT,
                 },
-                "cell":   {"note": f"-{abs(penalty):.0f} Asistencia"},
+                "cell":   {"note": f"-{abs(penalty):g} Asistencia"},
                 "fields": "note",
             }
         })
