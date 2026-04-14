@@ -128,9 +128,10 @@ def parse_month() -> tuple[int, int]:
 
 
 def month_utc_range(year: int, month: int):
+    # Usar EST/EDT (America/New_York) — Ringba opera en Eastern Time, no en VET
     days  = monthrange(year, month)[1]
-    start = VET.localize(datetime(year, month, 1,    0,  0,  0)).astimezone(timezone.utc)
-    end   = VET.localize(datetime(year, month, days, 23, 59, 59)).astimezone(timezone.utc)
+    start = EST.localize(datetime(year, month, 1,    0,  0,  0)).astimezone(timezone.utc)
+    end   = EST.localize(datetime(year, month, days, 23, 59, 59)).astimezone(timezone.utc)
     return start, end
 
 
@@ -183,9 +184,8 @@ def load_mb_config() -> dict:
 
 
 def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
-    # exclude_duplicates=True para coincidir con la UI de Ringba Publisher Summary
-    pub_map = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc,
-                                    exclude_duplicates=True)
+    # exclude_duplicates=False — el fix de paginación está en el chunking por día
+    pub_map = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
     result  = {key: data["payout"] for key, data in pub_map.items()}
     print("  [Ringba] Payouts:")
     for k, v in sorted(result.items(), key=lambda x: -x[1]):
@@ -576,7 +576,7 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
         })
 
     # ── Tabla guía de premios Q–T: formato ───────────────────────────────────
-    prize_end_row = prize_start_row + len(PRIME_TABLE)  # header + 8 filas de datos
+    prize_end_row = prize_start_row + len(PRIME_TABLE)  # última fila de datos (header + 8 filas)
 
     # Header Q–T
     reqs.append({
@@ -589,10 +589,10 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
             "fields": "userEnteredFormat(backgroundColor,textFormat)",
         }
     })
-    # Datos Q–T
+    # Datos Q–T (sin +1 en el end: evita la fila vacía formateada)
     reqs.append({
         "repeatCell": {
-            "range": grid_range(sheet_id, prize_start_row + 1, COL_PRIZE_REV, prize_end_row + 1, COL_PRIZE_PRIME),
+            "range": grid_range(sheet_id, prize_start_row + 1, COL_PRIZE_REV, prize_end_row, COL_PRIZE_PRIME),
             "cell":  {"userEnteredFormat": {
                 "backgroundColor": C_DATA,
                 "textFormat": {"foregroundColor": C_BLACK},
@@ -600,10 +600,10 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
             "fields": "userEnteredFormat(backgroundColor,textFormat)",
         }
     })
-    # Bordes Q–T
+    # Bordes Q–T (sin +1: incluye header + 8 datos, sin fila extra)
     reqs.append({
         "updateBorders": {
-            "range":           grid_range(sheet_id, prize_start_row, COL_PRIZE_REV, prize_end_row + 1, COL_PRIZE_PRIME),
+            "range":           grid_range(sheet_id, prize_start_row, COL_PRIZE_REV, prize_end_row, COL_PRIZE_PRIME),
             "top": border, "bottom": border, "left": border, "right": border,
             "innerHorizontal": border, "innerVertical": border,
         }
@@ -612,7 +612,7 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
     for col in [COL_PRIZE_REV, COL_PRIZE_RPRIME]:
         reqs.append({
             "repeatCell": {
-                "range": grid_range(sheet_id, prize_start_row + 1, col, prize_end_row + 1, col),
+                "range": grid_range(sheet_id, prize_start_row + 1, col, prize_end_row, col),
                 "cell":  {"userEnteredFormat": {"numberFormat": currency_fmt}},
                 "fields": "userEnteredFormat.numberFormat",
             }
@@ -737,15 +737,17 @@ def main() -> None:
     ws_2026.update(range_name=rng, values=all_rows, value_input_option="USER_ENTERED")
     print(f"Tabla escrita en {rng}")
 
-    # ── 8. Escribir tabla guía de premios (Q-R) ───────────────────────────────
-    prize_rows = build_prize_table()
-    prize_end  = start_row + len(prize_rows) - 1
-    prize_rng  = f"Q{start_row}:T{prize_end}"
+    # ── 8. Escribir tabla guía de premios (Q-T) ──────────────────────────────
+    # Empieza en start_row+1 (fila de columnas) para alinearse con la tabla principal
+    prize_start = start_row + 1
+    prize_rows  = build_prize_table()
+    prize_end   = prize_start + len(prize_rows) - 1
+    prize_rng   = f"Q{prize_start}:T{prize_end}"
     ws_2026.update(range_name=prize_rng, values=prize_rows, value_input_option="USER_ENTERED")
     print(f"Tabla de premios escrita en {prize_rng}")
 
     # ── 9. Formato ────────────────────────────────────────────────────────────
-    apply_formatting(spreadsheet, ws_2026, start_row, len(mb_data), start_row)
+    apply_formatting(spreadsheet, ws_2026, start_row, len(mb_data), prize_start)
     print("Formato aplicado")
 
     # ── 10. Notas de penalización de asistencia en G ──────────────────────────
