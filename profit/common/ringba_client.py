@@ -136,9 +136,19 @@ def get_publisher_summary(
         day_fetched = 0
         offset      = 0
 
+        day_total = 0  # totalCount para este chunk (0 = desconocido)
+
         for page in range(1, MAX_PAGES + 1):
-            data    = _post_calllogs(token, account_id, chunk_start, chunk_end, PAGE_SIZE, offset)
-            records = (data.get("report") or {}).get("records") or []
+            data   = _post_calllogs(token, account_id, chunk_start, chunk_end, PAGE_SIZE, offset)
+            report = data.get("report") or {}
+            records = report.get("records") or []
+
+            # Obtener totalCount en la primera página del chunk
+            if page == 1:
+                try:
+                    day_total = int(report.get("totalCount") or 0)
+                except (ValueError, TypeError):
+                    day_total = 0
 
             if not records:
                 break
@@ -176,6 +186,10 @@ def get_publisher_summary(
             total_fetched += len(records)
             offset        += len(records)
 
+            # Usar totalCount si está disponible (evita corte anticipado cuando
+            # Ringba devuelve < PAGE_SIZE registros pero aún quedan más)
+            if day_total > 0 and offset >= day_total:
+                break
             if len(records) < PAGE_SIZE:
                 break
 

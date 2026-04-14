@@ -128,10 +128,10 @@ def parse_month() -> tuple[int, int]:
 
 
 def month_utc_range(year: int, month: int):
-    # Usar EST/EDT (America/New_York) — Ringba opera en Eastern Time, no en VET
+    # Usar VET (UTC-4, igual que Ringba UI y que el semanal)
     days  = monthrange(year, month)[1]
-    start = EST.localize(datetime(year, month, 1,    0,  0,  0)).astimezone(timezone.utc)
-    end   = EST.localize(datetime(year, month, days, 23, 59, 59)).astimezone(timezone.utc)
+    start = VET.localize(datetime(year, month, 1,    0,  0,  0)).astimezone(timezone.utc)
+    end   = VET.localize(datetime(year, month, days, 23, 59, 59)).astimezone(timezone.utc)
     return start, end
 
 
