@@ -542,10 +542,26 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
         })
 
     # ── Bordes ────────────────────────────────────────────────────────────────
-    # Tabla principal A–J
+    # Celda A de la fila de fecha: solo borde en esa celda
     reqs.append({
         "updateBorders": {
-            "range":           grid_range(sheet_id, row_date, 1, row_tot, 10),
+            "range": grid_range(sheet_id, row_date, 1, row_date, 1),
+            "top": border, "bottom": border, "left": border, "right": border,
+        }
+    })
+    # Celdas B-O de la fila de fecha: sin bordes
+    reqs.append({
+        "updateBorders": {
+            "range": grid_range(sheet_id, row_date, 2, row_date, TOTAL_COLS),
+            "top": no_border, "bottom": no_border,
+            "left": no_border, "right": no_border,
+            "innerHorizontal": no_border, "innerVertical": no_border,
+        }
+    })
+    # Tabla principal A–J (desde row_cols, excluyendo row_date)
+    reqs.append({
+        "updateBorders": {
+            "range":           grid_range(sheet_id, row_cols, 1, row_tot, 10),
             "top": border, "bottom": border, "left": border, "right": border,
             "innerHorizontal": border, "innerVertical": border,
         }
@@ -553,7 +569,7 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
     # K–L sin bordes
     reqs.append({
         "updateBorders": {
-            "range": grid_range(sheet_id, row_date, 11, row_tot, 12),
+            "range": grid_range(sheet_id, row_cols, 11, row_tot, 12),
             "top": no_border, "bottom": no_border,
             "left": no_border, "right": no_border,
             "innerHorizontal": no_border, "innerVertical": no_border,
@@ -562,7 +578,7 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
     # M–O (Revenue Dif, Profit Dif, Indicator)
     reqs.append({
         "updateBorders": {
-            "range":           grid_range(sheet_id, row_date, 13, row_tot, TOTAL_COLS),
+            "range":           grid_range(sheet_id, row_cols, 13, row_tot, TOTAL_COLS),
             "top": border, "bottom": border, "left": border, "right": border,
             "innerHorizontal": border, "innerVertical": border,
         }
@@ -573,7 +589,7 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
     for col in [COL_PROFIT, COL_PROFITLOSS_NOPRIME, COL_PROFITLOSS]:
         reqs.append({
             "updateBorders": {
-                "range": grid_range(sheet_id, row_date, col, row_tot, col),
+                "range": grid_range(sheet_id, row_cols, col, row_tot, col),
                 "right": border_thick,
             }
         })
