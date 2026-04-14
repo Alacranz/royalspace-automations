@@ -97,15 +97,16 @@ COL_PRIZE_PROFIT = 19  # S  Profit
 COL_PRIZE_PRIME  = 20  # T  Prime
 
 # ── Tabla de Royal Prime ───────────────────────────────────────────────────────
+# (revenue_threshold, royal_prime, profit_target, prime_prize)
 PRIME_TABLE = [
-    (500,  50),
-    (1000, 100),
-    (1500, 150),
-    (2000, 200),
-    (2500, 250),
-    (3000, 300),
-    (3500, 350),
-    (4000, 400),
+    (500,  50,  400,  300),
+    (1000, 100, 500,  500),
+    (1500, 150, 600,  1000),
+    (2000, 200, 700,  1000),
+    (2500, 250, 1000, 1100),
+    (3000, 300, 1200, 1500),
+    (3500, 350, 1400, 1600),
+    (4000, 400, 1700, 2000),
 ]
 
 # ── Colores ───────────────────────────────────────────────────────────────────
@@ -158,7 +159,7 @@ def grid_range(sheet_id: int, r1: int, c1: int, r2: int, c2: int) -> dict:
 def get_royal_prime(revenue: float) -> float:
     """Retorna el Royal Prime correspondiente al revenue del mes."""
     prime = 0.0
-    for threshold, amount in sorted(PRIME_TABLE, key=lambda x: x[0], reverse=True):
+    for threshold, amount, *_ in sorted(PRIME_TABLE, key=lambda x: x[0], reverse=True):
         if revenue >= threshold:
             prime = amount
             break
@@ -440,8 +441,8 @@ def build_prize_table() -> list[list]:
     Headers: Revenue | Royal Prime | Profit | Prime
     """
     rows = [["Revenue", "Royal Prime", "Profit", "Prime"]]
-    for rev, prime in PRIME_TABLE:
-        rows.append([rev, prime, "", ""])
+    for rev, royal_prime, profit, prime in PRIME_TABLE:
+        rows.append([rev, royal_prime, profit, prime])
     return rows
 
 
