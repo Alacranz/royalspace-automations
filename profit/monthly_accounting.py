@@ -266,6 +266,31 @@ def find_prev_month_pagado_rows(ws_weekly, year: int, month: int) -> dict[str, i
     return {}
 
 
+def read_sistema_datos(spreadsheet) -> dict[str, float]:
+    """
+    Lee penalizaciones de asistencia desde hoja 'SISTEMA_DATOS'.
+    Retorna {sheet_name → penalty} (negativo o 0).
+    """
+    result = {mb["sheet_name"]: 0.0 for mb in MB_ORDER}
+    try:
+        ws   = spreadsheet.worksheet("SISTEMA_DATOS")
+        rows = ws.get_all_values()
+        for row in rows:
+            if len(row) < 2:
+                continue
+            name    = str(row[0]).strip()
+            pen_str = str(row[1]).strip().replace("$", "").replace(",", "")
+            if name in result:
+                try:
+                    result[name] = float(pen_str)
+                except ValueError:
+                    pass
+    except Exception as e:
+        print(f"Advertencia SISTEMA_DATOS: {e}. Penalizaciones = 0.")
+    print(f"  [SISTEMA_DATOS] Penalizaciones: {result}")
+    return result
+
+
 def find_prev_month_mb_rows_in_2026(ws_2026) -> dict[str, int]:
     """
     Busca en la hoja '2026' el último row de cada MB (mes anterior).
@@ -346,7 +371,8 @@ def build_table(
         row[COL_ADSPENT50         - 1] = f"={C}*50%"
         row[COL_PROFIT            - 1] = f"={B}+{D}"
         row[COL_SPENTPLUS         - 1] = f_val
-        row[COL_SPENT             - 1] = ""                      # vacío/manual
+        penalty = mb.get("attendance_penalty", 0.0)
+        row[COL_SPENT             - 1] = -abs(penalty) if penalty else ""  # negativo si hay penalización
         row[COL_PROFITLOSS_NOPRIME - 1] = f"={E}+{F}+{G}"       # sin prime
         row[COL_ROYALPRIME        - 1] = mb.get("royal_prime") or ""
         row[COL_PROFITLOSS        - 1] = f"={B}+{F}+{G}+{I}+({C}*50%)"  # con prime
@@ -577,6 +603,37 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
     spreadsheet.batch_update({"requests": reqs})
 
 
+def apply_attendance_notes(spreadsheet, ws, start_row: int, mb_data: list[dict]) -> None:
+    """
+    Agrega notas en la celda G de cada MB que tenga penalización de asistencia.
+    Formato: "-3 Asistencia"
+    """
+    sheet_id = ws.id
+    reqs = []
+    for i, mb in enumerate(mb_data):
+        penalty = mb.get("attendance_penalty", 0.0)
+        if not penalty:
+            continue
+        row_n = start_row + 2 + i
+        reqs.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId":          sheet_id,
+                    "startRowIndex":    row_n - 1,
+                    "endRowIndex":      row_n,
+                    "startColumnIndex": COL_SPENT - 1,
+                    "endColumnIndex":   COL_SPENT,
+                },
+                "cell":   {"note": f"-{abs(penalty):.0f} Asistencia"},
+                "fields": "note",
+            }
+        })
+    if reqs:
+        spreadsheet.batch_update({"requests": reqs})
+        noted = [mb["name"] for mb in mb_data if mb.get("attendance_penalty")]
+        print(f"Notas de asistencia agregadas en G: {noted}")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -623,6 +680,10 @@ def main() -> None:
 
     prev_2026_rows = find_prev_month_mb_rows_in_2026(ws_2026)
 
+    # Penalizaciones de asistencia (SISTEMA_DATOS)
+    print("Leyendo penalizaciones de asistencia...")
+    attendance_map = read_sistema_datos(spreadsheet)
+
     # ── 5. Construir datos por MB ─────────────────────────────────────────────
     mb_data = []
     for mb in MB_ORDER:
@@ -632,15 +693,17 @@ def main() -> None:
         payout  = payouts.get(pub_key, 0.0)
         spend   = spends.get(ad_id, 0.0)
         prime   = get_royal_prime(payout)
+        penalty = attendance_map.get(mb["sheet_name"], 0.0)
 
         print(f"  {mb['sheet_name']}: payout=${payout:.2f}  spend=${spend:.2f}  "
-              f"prime=${prime:.0f}")
+              f"prime=${prime:.0f}  asistencia=-${penalty:.0f}")
 
         mb_data.append({
-            "name":        mb["sheet_name"],
-            "payout":      payout,
-            "spend":       spend,
-            "royal_prime": prime if prime > 0 else "",
+            "name":               mb["sheet_name"],
+            "payout":             payout,
+            "spend":              spend,
+            "royal_prime":        prime if prime > 0 else "",
+            "attendance_penalty": penalty,
         })
 
     # ── 6. Determinar fila de inicio ──────────────────────────────────────────
@@ -667,10 +730,18 @@ def main() -> None:
     apply_formatting(spreadsheet, ws_2026, start_row, len(mb_data), start_row)
     print("Formato aplicado")
 
-    # ── 10. Discord ───────────────────────────────────────────────────────────
+    # ── 10. Notas de penalización de asistencia en G ──────────────────────────
+    apply_attendance_notes(spreadsheet, ws_2026, start_row, mb_data)
+
+    # ── 11. Discord ───────────────────────────────────────────────────────────
+    penalized = [mb["name"] for mb in mb_data if mb.get("attendance_penalty")]
+    penalty_note = (
+        f"  Penalizaciones en G: {', '.join(penalized)}" if penalized
+        else "  Sin penalizaciones de asistencia."
+    )
     msg = (
         f"✅ **Contabilidad mensual: {month_names[month]} {year}**\n"
-        f"Tabla escrita en hoja '2026' — columna G (Spent) queda vacía para ingreso manual."
+        f"Tabla escrita en hoja '2026'.\n{penalty_note}"
     )
     discord_send(WEBHOOK_MOD, msg)
     print("OK — confirmación enviada a Discord #mod")
