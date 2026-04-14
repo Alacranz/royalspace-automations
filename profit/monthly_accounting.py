@@ -90,9 +90,11 @@ COL_PROFITDIF        = 14  # N
 COL_INDICATOR        = 15  # O
 TOTAL_COLS           = 15
 
-# Tabla guía de premios — columnas Q y R (17 y 18)
-COL_PRIZE_REV   = 17  # Q
-COL_PRIZE_PRIME = 18  # R
+# Tabla guía de premios — columnas Q–T (17–20)
+COL_PRIZE_REV    = 17  # Q  Revenue
+COL_PRIZE_RPRIME = 18  # R  Royal Prime
+COL_PRIZE_PROFIT = 19  # S  Profit
+COL_PRIZE_PRIME  = 20  # T  Prime
 
 # ── Tabla de Royal Prime ───────────────────────────────────────────────────────
 PRIME_TABLE = [
@@ -390,12 +392,12 @@ def build_table(
 
 def build_prize_table() -> list[list]:
     """
-    Construye la tabla guía de premios para columnas Q-R.
-    Headers en fila start_row, datos debajo.
+    Construye la tabla guía de premios para columnas Q–T.
+    Headers: Revenue | Royal Prime | Profit | Prime
     """
-    rows = [["Revenue", "Royal Prime"]]
+    rows = [["Revenue", "Royal Prime", "Profit", "Prime"]]
     for rev, prime in PRIME_TABLE:
-        rows.append([rev, prime])
+        rows.append([rev, prime, "", ""])
     return rows
 
 
@@ -403,7 +405,7 @@ def build_prize_table() -> list[list]:
 # FORMATO
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int) -> None:
+def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start_row: int) -> None:
     sheet_id = ws.id
     row_date = start_row
     row_cols = start_row + 1
@@ -413,7 +415,8 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int) -> None:
 
     currency_fmt = {"type": "NUMBER", "pattern": "$#,##0.00;[RED]-$#,##0.00"}
     pct_fmt      = {"type": "NUMBER", "pattern": "0.00%;[RED]-0.00%"}
-    border       = {"style": "SOLID", "width": 1, "color": C_GRAY}
+    border       = {"style": "SOLID",   "width": 1, "color": C_GRAY}
+    border_thick = {"style": "SOLID",   "width": 2, "color": C_GRAY}
     no_border    = {"style": "NONE"}
 
     def fmt_req(r1, c1, r2, c2, bg=None, fg=None, bold=None, num_fmt=None):
@@ -518,6 +521,59 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int) -> None:
         }
     })
 
+    # ── Bordes gruesos en col E (right), H (right), J (right) ─────────────────
+    # Borde derecho grueso en E (col 5) — separa Profit de Spent/plus
+    for col in [COL_PROFIT, COL_PROFITLOSS_NOPRIME, COL_PROFITLOSS]:
+        reqs.append({
+            "updateBorders": {
+                "range": grid_range(sheet_id, row_date, col, row_tot, col),
+                "right": border_thick,
+            }
+        })
+
+    # ── Tabla guía de premios Q–T: formato ───────────────────────────────────
+    prize_end_row = prize_start_row + len(PRIME_TABLE)  # header + 8 filas de datos
+
+    # Header Q–T
+    reqs.append({
+        "repeatCell": {
+            "range": grid_range(sheet_id, prize_start_row, COL_PRIZE_REV, prize_start_row, COL_PRIZE_PRIME),
+            "cell":  {"userEnteredFormat": {
+                "backgroundColor": C_HEADER,
+                "textFormat": {"bold": True, "foregroundColor": C_WHITE},
+            }},
+            "fields": "userEnteredFormat(backgroundColor,textFormat)",
+        }
+    })
+    # Datos Q–T
+    reqs.append({
+        "repeatCell": {
+            "range": grid_range(sheet_id, prize_start_row + 1, COL_PRIZE_REV, prize_end_row + 1, COL_PRIZE_PRIME),
+            "cell":  {"userEnteredFormat": {
+                "backgroundColor": C_DATA,
+                "textFormat": {"foregroundColor": C_BLACK},
+            }},
+            "fields": "userEnteredFormat(backgroundColor,textFormat)",
+        }
+    })
+    # Bordes Q–T
+    reqs.append({
+        "updateBorders": {
+            "range":           grid_range(sheet_id, prize_start_row, COL_PRIZE_REV, prize_end_row + 1, COL_PRIZE_PRIME),
+            "top": border, "bottom": border, "left": border, "right": border,
+            "innerHorizontal": border, "innerVertical": border,
+        }
+    })
+    # Formato numérico en Q y R (Revenue y Royal Prime)
+    for col in [COL_PRIZE_REV, COL_PRIZE_RPRIME]:
+        reqs.append({
+            "repeatCell": {
+                "range": grid_range(sheet_id, prize_start_row + 1, col, prize_end_row + 1, col),
+                "cell":  {"userEnteredFormat": {"numberFormat": currency_fmt}},
+                "fields": "userEnteredFormat.numberFormat",
+            }
+        })
+
     spreadsheet.batch_update({"requests": reqs})
 
 
@@ -603,12 +659,12 @@ def main() -> None:
     # ── 8. Escribir tabla guía de premios (Q-R) ───────────────────────────────
     prize_rows = build_prize_table()
     prize_end  = start_row + len(prize_rows) - 1
-    prize_rng  = f"Q{start_row}:R{prize_end}"
+    prize_rng  = f"Q{start_row}:T{prize_end}"
     ws_2026.update(range_name=prize_rng, values=prize_rows, value_input_option="USER_ENTERED")
     print(f"Tabla de premios escrita en {prize_rng}")
 
     # ── 9. Formato ────────────────────────────────────────────────────────────
-    apply_formatting(spreadsheet, ws_2026, start_row, len(mb_data))
+    apply_formatting(spreadsheet, ws_2026, start_row, len(mb_data), start_row)
     print("Formato aplicado")
 
     # ── 10. Discord ───────────────────────────────────────────────────────────
