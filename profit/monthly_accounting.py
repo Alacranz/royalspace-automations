@@ -110,12 +110,13 @@ PRIME_TABLE = [
 ]
 
 # ── Colores ───────────────────────────────────────────────────────────────────
-C_HEADER = {"red": 0.122, "green": 0.286, "blue": 0.490}  # #1F497D
-C_DATA   = {"red": 0.812, "green": 0.886, "blue": 0.953}  # #CFE2F3
-C_WHITE  = {"red": 1.0,   "green": 1.0,   "blue": 1.0}
-C_BLACK  = {"red": 0.0,   "green": 0.0,   "blue": 0.0}
-C_GOLD   = {"red": 1.0,   "green": 0.843, "blue": 0.0}
-C_GRAY   = {"red": 0.3,   "green": 0.3,   "blue": 0.3}
+C_HEADER = {"red": 0.0745, "green": 0.3098, "blue": 0.3608}  # #134f5c — headers
+C_TOTAL  = {"red": 0.0471, "green": 0.2039, "blue": 0.2392}  # #0c343d — total + fecha
+C_DATA   = {"red": 0.812,  "green": 0.886,  "blue": 0.953}   # #CFE2F3
+C_WHITE  = {"red": 1.0,    "green": 1.0,    "blue": 1.0}
+C_BLACK  = {"red": 0.0,    "green": 0.0,    "blue": 0.0}
+C_GOLD   = {"red": 1.0,    "green": 0.843,  "blue": 0.0}
+C_GRAY   = {"red": 0.3,    "green": 0.3,    "blue": 0.3}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -128,10 +129,12 @@ def parse_month() -> tuple[int, int]:
 
 
 def month_utc_range(year: int, month: int):
-    # Usar VET (UTC-4, igual que Ringba UI y que el semanal)
+    # Usar UTC-5 fijo — Ringba UI muestra "(UTC-05:00) Eastern Time" con offset fijo,
+    # sin ajuste DST. VET (UTC-4) desplazaba el rango 1 hora causando $~8 error.
+    FIXED_UTC5 = pytz.FixedOffset(-300)
     days  = monthrange(year, month)[1]
-    start = VET.localize(datetime(year, month, 1,    0,  0,  0)).astimezone(timezone.utc)
-    end   = VET.localize(datetime(year, month, days, 23, 59, 59)).astimezone(timezone.utc)
+    start = FIXED_UTC5.localize(datetime(year, month, 1,    0,  0,  0)).astimezone(timezone.utc)
+    end   = FIXED_UTC5.localize(datetime(year, month, days, 23, 59, 59)).astimezone(timezone.utc)
     return start, end
 
 
@@ -492,11 +495,11 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
     # ── Colores ───────────────────────────────────────────────────────────────
     # Rango principal A–J (1–10) + M–O (13–15) coloreados; K(11) y L(12) blanco
 
-    # Fila de fecha: solo col A con fondo; B–O sin fondo (igual que FEB manual)
-    reqs.append(fmt_req(row_date, 1,  row_date, 10,         C_HEADER, C_WHITE, True))
-    reqs.append(fmt_req(row_date, 11, row_date, TOTAL_COLS, C_WHITE,  None,    None))
+    # Fila de fecha: SOLO celda A con fondo #0c343d; resto sin fondo
+    reqs.append(fmt_req(row_date, 1,  row_date, 1,          C_TOTAL, C_WHITE, True))
+    reqs.append(fmt_req(row_date, 2,  row_date, TOTAL_COLS, C_WHITE, None,    None))
 
-    # Fila de columnas
+    # Fila de columnas: #134f5c
     reqs.append(fmt_req(row_cols, 1,  row_cols, 10,         C_HEADER, C_WHITE, True))
     reqs.append(fmt_req(row_cols, 11, row_cols, 12,         C_WHITE,  None,    None))
     reqs.append(fmt_req(row_cols, 13, row_cols, TOTAL_COLS, C_HEADER, C_WHITE, True))
@@ -510,10 +513,10 @@ def apply_formatting(spreadsheet, ws, start_row: int, mb_count: int, prize_start
     reqs.append(fmt_req(row_mb_s, 11, row_mb_e, 12,         C_WHITE, None,    None))
     reqs.append(fmt_req(row_mb_s, 13, row_mb_e, TOTAL_COLS, C_DATA,  C_BLACK, False))
 
-    # Fila TOTAL
-    reqs.append(fmt_req(row_tot, 1,  row_tot, 10,           C_HEADER, C_WHITE, True))
-    reqs.append(fmt_req(row_tot, 11, row_tot, 12,           C_WHITE,  None,    None))
-    reqs.append(fmt_req(row_tot, 13, row_tot, TOTAL_COLS,   C_HEADER, C_WHITE, True))
+    # Fila TOTAL: #0c343d
+    reqs.append(fmt_req(row_tot, 1,  row_tot, 10,           C_TOTAL, C_WHITE, True))
+    reqs.append(fmt_req(row_tot, 11, row_tot, 12,           C_WHITE, None,    None))
+    reqs.append(fmt_req(row_tot, 13, row_tot, TOTAL_COLS,   C_TOTAL, C_WHITE, True))
 
     # ── Formato numérico ──────────────────────────────────────────────────────
     currency_cols = [
