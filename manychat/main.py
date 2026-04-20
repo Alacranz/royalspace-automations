@@ -664,8 +664,13 @@ async def billing_dashboard(request: Request) -> object:
     summary_rows: list[list] = []
     buyers_rows:  list[list] = []
     invoice_rows: list[list] = []
+    sheets_error: str = ""
 
-    if creds_json and spreadsheet_id:
+    if not creds_json:
+        sheets_error = "GOOGLE_SERVICE_ACCOUNT_JSON no está configurado en Railway."
+    elif not spreadsheet_id:
+        sheets_error = "BILLING_SPREADSHEET_ID no está configurado en Railway."
+    else:
         try:
             import json as _json
             import gspread
@@ -679,14 +684,14 @@ async def billing_dashboard(request: Request) -> object:
             def _read_tab(name):
                 try:
                     return _ss.worksheet(name).get_all_values()
-                except Exception:
-                    return []
+                except Exception as tab_err:
+                    return [["_tab_error", str(tab_err)]]
 
             summary_rows = _read_tab("DASHBOARD_SUMMARY")
             buyers_rows  = _read_tab("DASHBOARD_BUYERS")
             invoice_rows = _read_tab("DASHBOARD_INVOICES")
         except Exception as e:
-            summary_rows = [["Error", str(e), ""]]
+            sheets_error = str(e)
 
     def _kv(rows, key):
         for r in rows[1:]:
@@ -727,6 +732,11 @@ async def billing_dashboard(request: Request) -> object:
 
     buyers_table  = _table(buyers_rows)
     invoice_table = _table(invoice_rows)
+    error_banner  = (
+        f'<div style="background:#7f1d1d;border:1px solid #ef4444;border-radius:8px;'
+        f'padding:12px 16px;margin-bottom:24px;color:#fca5a5;font-size:0.85rem;">'
+        f'⚠️ Error cargando datos: {sheets_error}</div>'
+    ) if sheets_error else ""
 
     html = f"""<!DOCTYPE html>
 <html lang="es">
@@ -756,6 +766,7 @@ async def billing_dashboard(request: Request) -> object:
     </div>
   </div>
 
+  {error_banner}
   <!-- KPI Cards -->
   <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
     <div class="card p-4">
