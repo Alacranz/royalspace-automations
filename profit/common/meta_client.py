@@ -52,31 +52,57 @@ def get_spend_range(
     """
     Retorna el spend para un rango de fechas personalizado.
     since / until en formato YYYY-MM-DD.
-    Equivalente a Get-MetaSpendYesterday pero con rango libre.
+    Intenta primero con time_range (JSON); si falla, reintenta con
+    parámetros since/until directos (algunos account types los aceptan mejor).
     """
     import json as _json
     clean_id = account_id.replace("act_", "")
     url = f"https://graph.facebook.com/{api_version}/act_{clean_id}/insights"
-    params = {
-        "fields":      "spend",
-        "time_range":  _json.dumps({"since": since, "until": until}),
-        "level":       "account",
+
+    def _parse_spend(resp: requests.Response) -> float | None:
+        """Retorna el spend si la respuesta es válida, None si hay error."""
+        if resp.status_code != 200:
+            return None
+        data = resp.json().get("data") or []
+        if data:
+            try:
+                return float(data[0].get("spend") or 0)
+            except (ValueError, TypeError):
+                return 0.0
+        return 0.0
+
+    # Intento 1: time_range como JSON object (formato estándar)
+    resp1 = requests.get(url, params={
+        "fields":       "spend",
+        "time_range":   _json.dumps({"since": since, "until": until}),
+        "level":        "account",
         "access_token": access_token,
-    }
-    resp = requests.get(url, params=params, timeout=30)
+    }, timeout=30)
+    spend = _parse_spend(resp1)
+    if spend is not None:
+        return spend
+
+    # Intento 2: since/until como parámetros independientes (fallback)
+    resp2 = requests.get(url, params={
+        "fields":       "spend",
+        "since":        since,
+        "until":        until,
+        "level":        "account",
+        "access_token": access_token,
+    }, timeout=30)
+    spend = _parse_spend(resp2)
+    if spend is not None:
+        return spend
+
+    # Ambos intentos fallaron — incluir mensaje de error de Meta
     try:
-        resp.raise_for_status()
-    except requests.HTTPError:
-        raise requests.HTTPError(
-            f"Meta API error {resp.status_code} for account {account_id} range {since}/{until}"
-        ) from None
-    data = resp.json().get("data") or []
-    if data:
-        try:
-            return float(data[0].get("spend") or 0)
-        except (ValueError, TypeError):
-            return 0.0
-    return 0.0
+        meta_error = resp2.json().get("error") or {}
+        detail = meta_error.get("message") or meta_error.get("type") or f"HTTP {resp2.status_code}"
+    except Exception:
+        detail = f"HTTP {resp2.status_code}"
+    raise requests.HTTPError(
+        f"Meta API error for account {account_id} range {since}/{until}: {detail}"
+    ) from None
 
 
 def get_adset_insights(

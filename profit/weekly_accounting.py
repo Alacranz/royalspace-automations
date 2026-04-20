@@ -181,6 +181,7 @@ def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
 def fetch_meta_spends(since: str, until: str, mb_config: dict) -> dict[str, float]:
     """Retorna {facebook_ad_account_id → spend}."""
     spend_map: dict[str, float] = {}
+    meta_errors: list[str] = []
     for mb in MB_ORDER:
         cfg  = mb_config.get(mb["config_display"]) or {}
         ad_id = cfg.get("facebook_ad_account_id") or ""
@@ -188,10 +189,24 @@ def fetch_meta_spends(since: str, until: str, mb_config: dict) -> dict[str, floa
             try:
                 spend = get_spend_range(META_TOKEN, META_VERSION, ad_id, since, until)
             except Exception as e:
-                print(f"  Advertencia Meta {mb['sheet_name']}: {e}")
+                msg = f"⚠️ Meta API error — {mb['sheet_name']} ({ad_id}): {e}"
+                print(f"  {msg}")
+                meta_errors.append(msg)
                 spend = 0.0
             spend_map[ad_id] = spend
             print(f"  Meta {mb['sheet_name']}: ${spend:.2f}")
+
+    if meta_errors:
+        alert = (
+            f"🚨 **[CONTABILIDAD] Error Meta API — adspent usando $0.00**\n"
+            + "\n".join(meta_errors)
+            + "\nRevisa el Sheet y corrige manualmente si es necesario."
+        )
+        try:
+            discord_send(WEBHOOK_MOD, alert)
+        except Exception:
+            pass
+
     return spend_map
 
 

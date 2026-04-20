@@ -566,37 +566,6 @@ async def stats(date: str = "") -> JSONResponse:
     })
 
 
-@app.get("/billing-debug")
-async def billing_debug(token: str = "") -> JSONResponse:
-    """Temporary debug endpoint."""
-    expected = os.environ.get("BILLING_DASHBOARD_TOKEN", "")
-    if expected and token != expected:
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
-    creds_json     = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-    spreadsheet_id = os.environ.get("BILLING_SPREADSHEET_ID", "")
-    result = {
-        "has_creds":  bool(creds_json),
-        "creds_len":  len(creds_json),
-        "has_sheet":  bool(spreadsheet_id),
-        "sheet_id":   spreadsheet_id[:20] + "..." if spreadsheet_id else "",
-        "error":      None,
-        "rows_read":  0,
-    }
-    if creds_json and spreadsheet_id:
-        try:
-            import json as _json
-            import gspread
-            from google.oauth2.service_account import Credentials
-            _scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-            _creds  = Credentials.from_service_account_info(_json.loads(creds_json), scopes=_scopes)
-            _gc     = gspread.authorize(_creds)
-            _ss     = _gc.open_by_key(spreadsheet_id)
-            rows    = _ss.worksheet("DASHBOARD_SUMMARY").get_all_values()
-            result["rows_read"] = len(rows)
-            result["first_rows"] = rows[:3]
-        except Exception as e:
-            result["error"] = str(e)
-    return JSONResponse(result)
 
 
 _LOGIN_PAGE = """<!DOCTYPE html>
@@ -638,8 +607,10 @@ _LOGIN_PAGE = """<!DOCTYPE html>
 def _check_session(request) -> bool:
     """Verifica que la cookie de sesión sea válida."""
     expected = os.environ.get("BILLING_DASHBOARD_TOKEN", "")
-    session  = request.cookies.get("billing_session", "")
-    return bool(expected) and session == expected
+    if not expected:
+        return False
+    session = request.cookies.get("billing_session", "")
+    return bool(session) and session == expected
 
 
 @app.get("/billing/login")
@@ -652,9 +623,9 @@ async def billing_login_page() -> object:
 async def billing_login(request: Request) -> object:
     from fastapi.responses import HTMLResponse, RedirectResponse
     form    = await request.form()
-    pin     = form.get("pin", "")
+    pin     = (form.get("pin") or "").strip()
     expected = os.environ.get("BILLING_DASHBOARD_TOKEN", "")
-    if pin == expected:
+    if pin and expected and pin == expected:
         response = RedirectResponse(url="/billing", status_code=303)
         response.set_cookie(
             key="billing_session",
