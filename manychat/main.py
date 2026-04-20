@@ -535,6 +535,11 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/billing/ping")
+async def billing_ping() -> dict:
+    return {"status": "ok", "version": "aa78697", "billing_routes": True}
+
+
 @app.get("/stats")
 async def stats(date: str = "") -> JSONResponse:
     now   = datetime.now(timezone.utc)
