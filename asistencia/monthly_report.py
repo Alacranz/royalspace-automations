@@ -74,7 +74,7 @@ POINTS = {
     "ONTIME":   0.0,
     "LATE":    -1.5,
     "OUT":     -2.0,
-    "MISSING": -2.0,
+    "MISSING": -3.0,
 }
 
 COUNT_WEEKENDS = False
