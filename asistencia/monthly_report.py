@@ -145,6 +145,18 @@ def is_workday(d: datetime, person_name: str = "") -> bool:
     return False  # Domingo
 
 
+def get_points(state: str, person_name: str, d: datetime) -> float:
+    """
+    Penalización según estado, persona y día de la semana.
+    Clara L-V: flexible — solo penaliza por ausencia total (MISSING).
+               LATE y OUT no penalizan (horario diferente).
+    Clara Sábado y todos los demás: scoring estándar.
+    """
+    if person_name.strip().lower() == "clara" and d.weekday() < 5:
+        return POINTS["MISSING"] if state == "MISSING" else 0.0
+    return POINTS.get(state, 0.0)
+
+
 # ── Excel ─────────────────────────────────────────────────────────────────────
 def build_excel(
     people: list,
@@ -205,7 +217,7 @@ def build_excel(
             if state is None:
                 continue
 
-            cell.value = POINTS[state]
+            cell.value = get_points(state, name, datetime(year, month, d))
             cell.fill  = fill_map.get(state, PatternFill())
 
         # Columna Total (33): fórmula SUM sobre días 1-31 (columnas B a AF)
@@ -325,7 +337,10 @@ def main() -> None:
     for p in people:
         pid   = str(p.get("id", ""))
         name  = p.get("preferredName", "?")
-        total = round(sum(POINTS.get(s, 0.0) for s in states.get(pid, {}).values()), 2)
+        total = round(sum(
+            get_points(s, name, datetime(year, month, d))
+            for d, s in states.get(pid, {}).items()
+        ), 2)
         scores.append((name, total))
 
     scores.sort(key=lambda x: x[1])
