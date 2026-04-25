@@ -98,11 +98,11 @@ def main() -> None:
         if p.get("status") == "Joined"
         and (p.get("preferredName") or "").strip().lower() not in EXCLUDE_NAMES
     ]
-    # Sábados: solo quienes trabajan ese día
+    # Sábados: solo quienes trabajan ese día (substring match)
     people = [
         p for p in all_people
         if not is_saturday
-        or (p.get("preferredName") or "").strip().lower() in saturday_workers
+        or any(kw in (p.get("preferredName") or "").strip().lower() for kw in saturday_workers)
     ]
     print(f"Personas activas: {len(people)}{' (sábado — solo Clara)' if is_saturday else ''}")
 

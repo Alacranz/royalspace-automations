@@ -141,7 +141,8 @@ def is_workday(d: datetime, person_name: str = "") -> bool:
     if wd < 5:
         return True
     if wd == 5:  # Sábado
-        return person_name.strip().lower() in SATURDAY_WORKERS
+        low = person_name.strip().lower()
+        return any(kw in low for kw in SATURDAY_WORKERS)
     return False  # Domingo
 
 
@@ -152,7 +153,8 @@ def get_points(state: str, person_name: str, d: datetime) -> float:
                LATE y OUT no penalizan (horario diferente).
     Clara Sábado y todos los demás: scoring estándar.
     """
-    if person_name.strip().lower() == "clara" and d.weekday() < 5:
+    low = person_name.strip().lower()
+    if any(kw in low for kw in SATURDAY_WORKERS) and d.weekday() < 5:
         return POINTS["MISSING"] if state == "MISSING" else 0.0
     return POINTS.get(state, 0.0)
 
