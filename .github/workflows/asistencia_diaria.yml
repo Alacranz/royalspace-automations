@@ -2,11 +2,11 @@ name: Asistencia Diaria
 
 # Venezuela Standard Time = UTC-4 (sin DST)
 # 10:30 AM VET = 14:30 UTC
-# Se ejecuta de lunes a viernes
+# Se ejecuta de lunes a sábado (sábados solo reporta a Clara)
 
 on:
   schedule:
-    - cron: "30 14 * * 1-5"
+    - cron: "30 14 * * 1-6"
   workflow_dispatch: # permite ejecución manual desde GitHub
 
 jobs:

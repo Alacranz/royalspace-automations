@@ -90,12 +90,21 @@ def main() -> None:
     token = get_token(CLIENT_ID, CLIENT_SECRET)
     print("Token OK")
 
-    people = [
+    is_saturday = now_caracas.weekday() == 5
+    saturday_workers = {"clara"}
+
+    all_people = [
         p for p in get_people(token, ORG_ID)
         if p.get("status") == "Joined"
         and (p.get("preferredName") or "").strip().lower() not in EXCLUDE_NAMES
     ]
-    print(f"Personas activas: {len(people)}")
+    # Sábados: solo quienes trabajan ese día
+    people = [
+        p for p in all_people
+        if not is_saturday
+        or (p.get("preferredName") or "").strip().lower() in saturday_workers
+    ]
+    print(f"Personas activas: {len(people)}{' (sábado — solo Clara)' if is_saturday else ''}")
 
     # personId → primera marca "In" del día (datetime VET)
     first_in: dict[str, datetime] = {}
