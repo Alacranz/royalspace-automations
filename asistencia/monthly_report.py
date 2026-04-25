@@ -79,6 +79,9 @@ POINTS = {
 
 COUNT_WEEKENDS = False
 
+# Empleados que trabajan también los sábados (preferredName en minúsculas)
+SATURDAY_WORKERS = {"clara"}
+
 EXCLUDE_NAMES = {"edwar", "angela vanesa", "sebastian reyes", "angelica flores"}
 
 PAGE_SIZE = 200
@@ -132,9 +135,14 @@ def classify(hour: int, minute: int) -> str:
     return "OUT"
 
 
-def is_workday(d: datetime) -> bool:
-    """Lunes-Viernes = True. Fines de semana omitidos salvo COUNT_WEEKENDS=True."""
-    return COUNT_WEEKENDS or d.weekday() < 5
+def is_workday(d: datetime, person_name: str = "") -> bool:
+    """Lunes-Viernes para todos. Sábado también cuenta para SATURDAY_WORKERS."""
+    wd = d.weekday()
+    if wd < 5:
+        return True
+    if wd == 5:  # Sábado
+        return person_name.strip().lower() in SATURDAY_WORKERS
+    return False  # Domingo
 
 
 # ── Excel ─────────────────────────────────────────────────────────────────────
@@ -190,7 +198,7 @@ def build_excel(
             if d > days_in_month:
                 continue  # mes corto: dejar vacío
 
-            if not is_workday(datetime(year, month, d)):
+            if not is_workday(datetime(year, month, d), name):
                 continue  # fin de semana: vacío, no penaliza
 
             state = states.get(pid, {}).get(d)
@@ -289,9 +297,10 @@ def main() -> None:
     states: dict[str, dict[int, str]] = {}
     for p in people:
         pid = str(p.get("id", ""))
+        name_p = p.get("preferredName", "")
         states[pid] = {}
         for d in range(1, days_in_month + 1):
-            if not is_workday(datetime(year, month, d)):
+            if not is_workday(datetime(year, month, d), name_p):
                 continue
             if d in first_in.get(pid, {}):
                 cin   = first_in[pid][d]
