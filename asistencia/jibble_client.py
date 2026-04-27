@@ -5,11 +5,25 @@ Royalspace 2026
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
 import pytz
 import requests
+
+_RETRY_ON = {500, 502, 503, 504}
+
+
+def _get_with_retry(url: str, *, retries: int = 3, backoff: float = 5.0, **kwargs) -> requests.Response:
+    """GET con reintentos para errores 5xx transitorios de Jibble."""
+    for attempt in range(retries):
+        resp = requests.get(url, **kwargs)
+        if resp.status_code not in _RETRY_ON:
+            return resp
+        if attempt < retries - 1:
+            time.sleep(backoff * (attempt + 1))
+    return resp
 
 # ── Constantes ───────────────────────────────────────────────────────────────
 JIBBLE_TOKEN_URL       = "https://identity.prod.jibble.io/connect/token"
@@ -41,7 +55,7 @@ def get_token(client_id: str, client_secret: str) -> str:
 
 # ── People ────────────────────────────────────────────────────────────────────
 def get_people(token: str, org_id: str) -> list:
-    resp = requests.get(
+    resp = _get_with_retry(
         f"{JIBBLE_PEOPLE_URL}?organizationId={org_id}",
         headers={"Authorization": f"Bearer {token}"},
         timeout=30,
@@ -52,7 +66,7 @@ def get_people(token: str, org_id: str) -> list:
 
 # ── Time Entries ──────────────────────────────────────────────────────────────
 def get_time_entries_page(token: str, skip: int, top: int, orderby: str = "createdAt desc") -> list:
-    resp = requests.get(
+    resp = _get_with_retry(
         JIBBLE_ENTRIES_URL,
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
         params={"$orderby": orderby, "$skip": skip, "$top": top},
