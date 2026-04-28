@@ -45,14 +45,16 @@ MAX_HISTORY        = 30   # mensajes que lee Claude
 MAX_TOKENS         = 250
 MSGS_BEFORE_ZIP_INSIST = 3  # mensajes sin zip antes de insistir más
 
-SYSTEM_PROMPT = """You are part of a team that connects Spanish-speaking people in the United States with trusted dentists in their area.
+SYSTEM_PROMPT = """LANGUAGE RULE — ABSOLUTE PRIORITY (overrides everything else):
+- Detect the language of the user's latest message and respond ENTIRELY in that language.
+- English message → respond 100% in English. Zero Spanish words.
+- Spanish message → respond 100% in Spanish. Zero English words.
+- Mixed languages → use whichever language is dominant in their latest message.
+- This is non-negotiable. Never default to Spanish. Never mix languages in a single response.
+
+You are part of a team that connects people in the United States with trusted dentists in their area.
 
 Your goal is to get the person to call so they can be attended by a dentist. You are warm, empathetic, and concise.
-
-LANGUAGE RULE (highest priority):
-- Always respond in the SAME language the user writes in.
-- Spanish message → respond in Spanish. English message → respond in English.
-- Mixed languages → follow the dominant language.
 
 IDENTITY RULE (absolute, never break):
 - You are a person on the Dentista Latino team. Never say, imply, or hint that you are a bot, AI, virtual assistant, automated system, or anything non-human. If someone asks or accuses you of being a bot, do NOT confirm or deny — simply stay in character, be warm, and redirect to calling us.
@@ -104,6 +106,35 @@ URGENCY SIGNALS — when detected, respond with more energy and urgency to call 
 - HIGH-VALUE TREATMENT: If the user mentions implants, veneers, full dentures, smile makeover, cosmetic dentistry, full mouth restoration → show extra enthusiasm, these treatments change lives, make them feel this is exactly what we specialize in.
 
 NO COVERAGE: If the user mentions they were told there are no clinics in their area or no coverage: empathize, tell them you are actively looking for nearby options, ask them to stay available."""
+
+# ── Detección de idioma ───────────────────────────────────────────────────────
+
+_EN_MARKERS = {
+    "i", "the", "is", "are", "do", "you", "yes", "need", "want", "my",
+    "me", "have", "not", "get", "can", "a", "and", "to", "for", "in",
+    "of", "it", "that", "this", "we", "they", "he", "she", "what",
+    "how", "when", "where", "dentist", "teeth", "tooth", "pain", "help",
+    "hi", "hello", "ok", "okay", "please", "thank", "thanks",
+}
+_ES_MARKERS = {
+    "yo", "es", "el", "la", "los", "las", "un", "una", "soy", "estoy",
+    "quiero", "necesito", "tengo", "hola", "gracias", "como", "para",
+    "que", "qué", "si", "sí", "mi", "me", "tu", "su", "nos", "dentista",
+    "diente", "muela", "dolor", "ayuda", "buenas", "buenos",
+}
+
+
+def detect_language(text: str) -> str:
+    """Retorna 'en', 'es', o 'unknown' basado en palabras clave del mensaje."""
+    words = set(re.sub(r"[^a-záéíóúüñ ]", " ", text.lower()).split())
+    en_hits = len(words & _EN_MARKERS)
+    es_hits = len(words & _ES_MARKERS)
+    if en_hits > es_hits:
+        return "en"
+    if es_hits > en_hits:
+        return "es"
+    return "unknown"
+
 
 # ── Keywords ──────────────────────────────────────────────────────────────────
 
@@ -498,6 +529,13 @@ async def chat(req: ChatRequest) -> JSONResponse:
             f"and let them know they can reach us {next_open}. Encourage them to leave their question "
             "and we will follow up, or to call us when we open. Keep it brief and warm."
         )
+
+    # Instrucción de idioma explícita basada en el mensaje actual
+    lang = detect_language(text)
+    if lang == "en":
+        context_parts.insert(0, "LANGUAGE: User wrote in English. Your response MUST be entirely in English. Do not use any Spanish words.")
+    elif lang == "es":
+        context_parts.insert(0, "LANGUAGE: El usuario escribió en español. Tu respuesta DEBE ser completamente en español. No uses ninguna palabra en inglés.")
 
     system = SYSTEM_PROMPT
     if context_parts:
