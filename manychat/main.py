@@ -109,30 +109,56 @@ NO COVERAGE: If the user mentions they were told there are no clinics in their a
 
 # ── Detección de idioma ───────────────────────────────────────────────────────
 
+# Palabras claramente inglesas (excluye ambiguas como ok, si, no, a, me)
 _EN_MARKERS = {
     "i", "the", "is", "are", "do", "you", "yes", "need", "want", "my",
-    "me", "have", "not", "get", "can", "a", "and", "to", "for", "in",
-    "of", "it", "that", "this", "we", "they", "he", "she", "what",
-    "how", "when", "where", "dentist", "teeth", "tooth", "pain", "help",
-    "hi", "hello", "ok", "okay", "please", "thank", "thanks",
+    "have", "get", "can", "and", "to", "for", "in", "of", "it", "that",
+    "this", "we", "they", "he", "she", "what", "how", "when", "where",
+    "dentist", "teeth", "tooth", "pain", "help", "hi", "hello",
+    "please", "thank", "thanks", "looking", "appointment",
 }
+# Palabras claramente españolas
 _ES_MARKERS = {
     "yo", "es", "el", "la", "los", "las", "un", "una", "soy", "estoy",
     "quiero", "necesito", "tengo", "hola", "gracias", "como", "para",
-    "que", "qué", "si", "sí", "mi", "me", "tu", "su", "nos", "dentista",
+    "que", "qué", "sí", "mi", "tu", "su", "nos", "dentista",
     "diente", "muela", "dolor", "ayuda", "buenas", "buenos",
+    "donde", "cuándo", "cuanto", "también", "tambien", "clínica",
 }
+# Palabras ambiguas que se usan igual en ambos idiomas (ignorar para detección)
+_AMBIGUOUS = {"ok", "okay", "si", "no", "a", "me", "de"}
 
 
-def detect_language(text: str) -> str:
-    """Retorna 'en', 'es', o 'unknown' basado en palabras clave del mensaje."""
-    words = set(re.sub(r"[^a-záéíóúüñ ]", " ", text.lower()).split())
+def detect_language(text: str, history: list | None = None) -> str:
+    """
+    Retorna 'en', 'es', o 'unknown'.
+    Si el mensaje actual es ambiguo (corto o solo palabras neutras),
+    analiza el historial de la conversación para determinar el idioma dominante.
+    """
+    words = set(re.sub(r"[^a-záéíóúüñ ]", " ", text.lower()).split()) - _AMBIGUOUS
     en_hits = len(words & _EN_MARKERS)
     es_hits = len(words & _ES_MARKERS)
+
     if en_hits > es_hits:
         return "en"
     if es_hits > en_hits:
         return "es"
+
+    # Mensaje ambiguo → analizar historial reciente
+    if history:
+        hist_en, hist_es = 0, 0
+        for msg in history[-8:]:
+            content = msg.get("content", "")
+            if not isinstance(content, str):
+                continue
+            hw = set(re.sub(r"[^a-záéíóúüñ ]", " ", content.lower()).split()) - _AMBIGUOUS
+            hist_en += len(hw & _EN_MARKERS)
+            hist_es += len(hw & _ES_MARKERS)
+        if hist_en > hist_es:
+            return "en"
+        if hist_es > hist_en:
+            return "es"
+
     return "unknown"
 
 
@@ -530,8 +556,8 @@ async def chat(req: ChatRequest) -> JSONResponse:
             "and we will follow up, or to call us when we open. Keep it brief and warm."
         )
 
-    # Instrucción de idioma explícita basada en el mensaje actual
-    lang = detect_language(text)
+    # Instrucción de idioma explícita basada en el mensaje actual + historial
+    lang = detect_language(text, history_for_claude)
     if lang == "en":
         context_parts.insert(0, "LANGUAGE: User wrote in English. Your response MUST be entirely in English. Do not use any Spanish words.")
     elif lang == "es":
