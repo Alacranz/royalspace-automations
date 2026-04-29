@@ -560,8 +560,9 @@ async def chat(req: ChatRequest) -> JSONResponse:
     lang = detect_language(text, history_for_claude)
     if lang == "en":
         context_parts.insert(0, "LANGUAGE: User wrote in English. Your response MUST be entirely in English. Do not use any Spanish words.")
-    elif lang == "es":
-        context_parts.insert(0, "LANGUAGE: El usuario escribió en español. Tu respuesta DEBE ser completamente en español. No uses ninguna palabra en inglés.")
+    else:
+        # Español explícito cuando el idioma es español O ambiguo (números, ok, si, zip code, etc.)
+        context_parts.insert(0, "LANGUAGE: Respond in Spanish. The user's message is in Spanish or ambiguous — always default to Spanish unless the conversation is clearly in English.")
 
     system = SYSTEM_PROMPT
     if context_parts:
