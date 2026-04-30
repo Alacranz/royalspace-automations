@@ -265,7 +265,34 @@ def init_db() -> None:
                 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Idioma persistido por suscriptor — evita cambios de idioma entre mensajes
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS subscriber_language (
+                subscriber_id TEXT PRIMARY KEY,
+                language      TEXT NOT NULL,
+                updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
+
+
+def get_subscriber_language(subscriber_id: str) -> str | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT language FROM subscriber_language WHERE subscriber_id = ?",
+            (subscriber_id,),
+        ).fetchone()
+    return row["language"] if row else None
+
+
+def set_subscriber_language(subscriber_id: str, language: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO subscriber_language (subscriber_id, language, updated_at)
+               VALUES (?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(subscriber_id) DO UPDATE SET language=excluded.language, updated_at=CURRENT_TIMESTAMP""",
+            (subscriber_id, language),
+        )
 
 
 def log_tokens(input_tokens: int, output_tokens: int) -> None:
@@ -556,13 +583,22 @@ async def chat(req: ChatRequest) -> JSONResponse:
             "and we will follow up, or to call us when we open. Keep it brief and warm."
         )
 
-    # Instrucción de idioma explícita basada en el mensaje actual + historial
-    lang = detect_language(text, history_for_claude)
-    if lang == "en":
-        context_parts.insert(0, "LANGUAGE: User wrote in English. Your response MUST be entirely in English. Do not use any Spanish words.")
+    # ── Idioma: detectar en mensaje actual, persistir en DB ───────────────────
+    detected_lang = detect_language(text, history_for_claude)
+    stored_lang   = get_subscriber_language(req.subscriber_id)
+
+    # Si el mensaje actual tiene señal clara, actualizar preferencia en DB
+    if detected_lang in ("en", "es"):
+        set_subscriber_language(req.subscriber_id, detected_lang)
+        final_lang = detected_lang
     else:
-        # Español explícito cuando el idioma es español O ambiguo (números, ok, si, zip code, etc.)
-        context_parts.insert(0, "LANGUAGE: Respond in Spanish. The user's message is in Spanish or ambiguous — always default to Spanish unless the conversation is clearly in English.")
+        # Mensaje ambiguo (zip code, "ok", número) → usar idioma guardado o español por defecto
+        final_lang = stored_lang or "es"
+
+    if final_lang == "en":
+        context_parts.insert(0, "LANGUAGE: This subscriber communicates in English. Your entire response MUST be in English only. No Spanish words.")
+    else:
+        context_parts.insert(0, "LANGUAGE: Este suscriptor se comunica en español. Tu respuesta DEBE ser completamente en español. Sin palabras en inglés.")
 
     system = SYSTEM_PROMPT
     if context_parts:
