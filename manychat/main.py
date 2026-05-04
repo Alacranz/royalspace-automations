@@ -116,14 +116,32 @@ _EN_MARKERS = {
     "this", "we", "they", "he", "she", "what", "how", "when", "where",
     "dentist", "teeth", "tooth", "pain", "help", "hi", "hello",
     "please", "thank", "thanks", "looking", "appointment",
+    "cleaning", "price", "cost", "insurance", "location", "address",
+    "available", "today", "tomorrow", "schedule", "near", "coverage",
+    "treatment", "crown", "implant", "whitening", "denture", "extraction",
+    "emergency", "office", "clinic", "call", "with", "your", "our",
 }
 # Palabras claramente españolas
 _ES_MARKERS = {
     "yo", "es", "el", "la", "los", "las", "un", "una", "soy", "estoy",
     "quiero", "necesito", "tengo", "hola", "gracias", "como", "para",
-    "que", "qué", "sí", "mi", "tu", "su", "nos", "dentista",
+    "que", "que", "si", "mi", "tu", "su", "nos", "dentista",
     "diente", "muela", "dolor", "ayuda", "buenas", "buenos",
-    "donde", "cuándo", "cuanto", "también", "tambien", "clínica",
+    "donde", "cuando", "cuanto", "tambien", "clinica",
+    # Palabras de consulta dental comunes en español
+    "precio", "precios", "costo", "costos",
+    "limpieza", "limpiezas", "cita", "citas",
+    "ubicacion", "ubicaciones", "direccion", "cerca",
+    "hoy", "manana", "semana", "dia", "dias",
+    "seguro", "cobertura", "pago", "pagos",
+    "tratamiento", "extraccion", "corona", "implante",
+    "blanqueamiento", "protesis", "consulta", "emergencia",
+    "disponible", "disponibles", "atencion", "servicio",
+    "tiene", "tenemos", "puedo", "podemos", "pueden",
+    "rapido", "rapida", "facil", "bueno", "buena",
+    "telefono", "ciudad", "area", "zona",
+    "queria", "quería", "podria", "podría", "necesito",
+    "dental", "dientes", "muelas", "boca",
 }
 # Palabras ambiguas que se usan igual en ambos idiomas (ignorar para detección)
 _AMBIGUOUS = {"ok", "okay", "si", "no", "a", "me", "de"}
