@@ -534,6 +534,12 @@ async def chat(req: ChatRequest) -> JSONResponse:
     else:
         final_lang = stored_lang or "es"
 
+    # Última respuesta del bot — para forzar variación explícita
+    last_assistant_msg = next(
+        (m["content"] for m in reversed(history_for_claude) if m["role"] == "assistant"),
+        None,
+    )
+
     # ── Construir contexto para Claude ───────────────────────────────────────
     context_parts: list[str] = []
 
@@ -586,6 +592,14 @@ async def chat(req: ChatRequest) -> JSONResponse:
             "HIGH-VALUE TREATMENT MENTIONED (implants, veneers, dentures, cosmetic, etc.). "
             "Show extra enthusiasm and warmth. These treatments are life-changing. "
             "Create excitement and strong motivation to call us to discuss their specific case."
+        )
+
+    if last_assistant_msg:
+        preview = last_assistant_msg[:180]
+        context_parts.append(
+            f"ANTI-REPEAT — YOUR LAST RESPONSE WAS: \"{preview}\". "
+            f"You MUST NOT reuse the same opening words, same sentence structure, or same call-to-action. "
+            f"Rephrase completely — different angle, different words, same goal."
         )
 
     if is_business_hours():

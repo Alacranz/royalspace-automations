@@ -13,8 +13,7 @@
       "discord_name": "Rex Direct",
       "billing_frequency": 1,
       "due_days": 15,
-      "send_invoice": false,
-      "_send_invoice_note": "TEMPORAL: false hasta 28-abr. Cambiar a true antes del 28-may para factura de abril",
+      "send_invoice": true,
       "active": true
     },
     {
@@ -25,8 +24,7 @@
       "discord_name": "Ray Advertising",
       "billing_frequency": 1,
       "due_days": 15,
-      "send_invoice": false,
-      "_send_invoice_note": "TEMPORAL: false hasta 28-abr. Cambiar a true antes del 28-may para factura de abril",
+      "send_invoice": true,
       "active": true
     },
     {

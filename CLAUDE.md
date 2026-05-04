@@ -186,8 +186,8 @@ normalize_name(name) → strip() → remove "^\(\d+\)\s*" → lower()
 
 | Buyer | Frecuencia | Due Days | Notas |
 |---|---|---|---|
-| Rex Direct | mensual | 15 | `send_invoice: false` hasta 28-abr (cambiar a true antes del 28-may) |
-| Ray Advertising | mensual | 15 | `send_invoice: false` hasta 28-abr (cambiar a true antes del 28-may) |
+| Rex Direct | mensual | 15 | activo |
+| Ray Advertising | mensual | 15 | activo |
 | MarketCall | mensual | 15 | activo |
 | 1800Dentist | mensual | 30 | activo |
 | UNIK | mensual | 30 | activo |
@@ -386,10 +386,6 @@ Configurado en `.claude/launch.json`
 - **GitHub → Actions → [workflow] → Run workflow**
 - `profit_true_profit.yml`: pasa `FORCE_RUN=true` automáticamente
 - Los demás workflows no tienen restricción de horario
-
-## Tareas Pendientes Importantes
-
-- **Antes del 28 de abril:** Cambiar `send_invoice: true` para Rex Direct y Ray Advertising en `billing/config.json` (actualmente `false` para evitar duplicado con factura enviada manualmente el 01-abr-2026)
 
 ---
 
