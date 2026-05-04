@@ -422,31 +422,37 @@ def _zip_in_history(history: list[dict]) -> str | None:
 
 
 BUSINESS_TZ = pytz.timezone("America/New_York")
-# L-V 8:00-20:00 EST, S 8:00-14:00 EST
+# L-V 9:00-19:00 EST, S 9:00-17:00 EST
 BUSINESS_HOURS = {
-    0: (8, 20),  # Monday
-    1: (8, 20),  # Tuesday
-    2: (8, 20),  # Wednesday
-    3: (8, 20),  # Thursday
-    4: (8, 20),  # Friday
-    5: (8, 14),  # Saturday
-    # Sunday: no hours (closed)
+    0: (9, 19),  # Monday
+    1: (9, 19),  # Tuesday
+    2: (9, 19),  # Wednesday
+    3: (9, 19),  # Thursday
+    4: (9, 19),  # Friday
+    5: (9, 17),  # Saturday
+    # Sunday: closed
 }
 
 DAY_NAMES_ES = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado"}
+DAY_NAMES_EN = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday"}
 
 
-def get_next_open_str() -> str:
-    """Return a human-friendly string for when we next open (EST)."""
+def get_next_open_label(lang: str = "es") -> str:
+    """Returns 'hoy a las 9:00 AM' / 'mañana…' / 'el lunes…' in the right language."""
     now = datetime.now(BUSINESS_TZ)
+    # Same day: not open yet (before 9 AM)
+    if BUSINESS_HOURS.get(now.weekday()) and now.hour < 9:
+        return "hoy a las 9:00 AM" if lang != "en" else "today at 9:00 AM"
+    # Next available day
     for delta in range(1, 8):
-        candidate = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        candidate = candidate + timedelta(days=delta)
-        hours = BUSINESS_HOURS.get(candidate.weekday())
-        if hours:
-            day = DAY_NAMES_ES.get(candidate.weekday(), "")
-            return f"el {day} a las {hours[0]}:00 AM"
-    return "pronto"
+        candidate = now + timedelta(days=delta)
+        if BUSINESS_HOURS.get(candidate.weekday()):
+            if delta == 1:
+                return "mañana a las 9:00 AM" if lang != "en" else "tomorrow at 9:00 AM"
+            if lang == "en":
+                return f"on {DAY_NAMES_EN[candidate.weekday()]} at 9:00 AM"
+            return f"el {DAY_NAMES_ES[candidate.weekday()]} a las 9:00 AM"
+    return "pronto" if lang != "en" else "soon"
 
 
 def is_business_hours() -> bool:
@@ -519,6 +525,15 @@ async def chat(req: ChatRequest) -> JSONResponse:
     # Si es solo imagen/adjunto sin texto, usar un placeholder para Claude
     text_for_claude = "[El usuario envió una imagen o archivo adjunto]" if image_sent else text
 
+    # ── Idioma: detectar PRIMERO para usarlo en todo el contexto ─────────────
+    detected_lang = detect_language(text, history_for_claude)
+    stored_lang   = get_subscriber_language(req.subscriber_id)
+    if detected_lang in ("en", "es"):
+        set_subscriber_language(req.subscriber_id, detected_lang)
+        final_lang = detected_lang
+    else:
+        final_lang = stored_lang or "es"
+
     # ── Construir contexto para Claude ───────────────────────────────────────
     context_parts: list[str] = []
 
@@ -574,26 +589,22 @@ async def chat(req: ChatRequest) -> JSONResponse:
         )
 
     if not is_business_hours():
-        next_open = get_next_open_str()
+        next_open = get_next_open_label(final_lang)
+        if final_lang == "en":
+            oot_msg = (
+                f"There are no agents available right now. "
+                f"Starting {next_open} we can help you without any problem. "
+                f"Would you like us to notify you when we're available?"
+            )
+        else:
+            oot_msg = (
+                f"Ahora mismo no hay agentes disponibles. "
+                f"A partir de {next_open} te podemos atender sin problema. "
+                f"¿Quieres que te avise cuando estemos disponibles?"
+            )
         context_parts.append(
-            f"It is currently OUTSIDE business hours (Mon-Fri 8AM-8PM EST, Sat 8AM-2PM EST). "
-            f"We next open {next_open} EST. "
-            "Acknowledge the user's message warmly, tell them we are not available right now, "
-            f"and let them know they can reach us {next_open}. Encourage them to leave their question "
-            "and we will follow up, or to call us when we open. Keep it brief and warm."
+            f"FUERA DE HORARIO — responde EXACTAMENTE con este mensaje, sin agregar nada más: \"{oot_msg}\""
         )
-
-    # ── Idioma: detectar en mensaje actual, persistir en DB ───────────────────
-    detected_lang = detect_language(text, history_for_claude)
-    stored_lang   = get_subscriber_language(req.subscriber_id)
-
-    # Si el mensaje actual tiene señal clara, actualizar preferencia en DB
-    if detected_lang in ("en", "es"):
-        set_subscriber_language(req.subscriber_id, detected_lang)
-        final_lang = detected_lang
-    else:
-        # Mensaje ambiguo (zip code, "ok", número) → usar idioma guardado o español por defecto
-        final_lang = stored_lang or "es"
 
     if final_lang == "en":
         context_parts.insert(0, "LANGUAGE: This subscriber communicates in English. Your entire response MUST be in English only. No Spanish words.")
