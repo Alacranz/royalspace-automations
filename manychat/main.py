@@ -492,7 +492,17 @@ def resolve_zip(zip_code: str) -> str:
             return f"{place['place name']}, {place['state abbreviation']}"
     except Exception:
         pass
-    return zip_code
+    return ""
+
+
+def _clean_zip_field(raw: str) -> str:
+    """Devuelve vacío si el campo es una variable ManyChat sin resolver ({{...}})."""
+    if not raw:
+        return ""
+    stripped = raw.strip()
+    if stripped.startswith("{{") or stripped.startswith("{cuf"):
+        return ""
+    return stripped
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
@@ -526,7 +536,12 @@ async def chat(req: ChatRequest) -> JSONResponse:
 
     # ── Historial y contexto ──────────────────────────────────────────────────
     history_full = get_history(req.subscriber_id)
-    history_for_claude = [{"role": h["role"], "content": h["content"]} for h in history_full]
+    # Sanitizar historial: eliminar placeholders ManyChat sin resolver ({{cuf_XXXXX}})
+    _MANYCHAT_VAR = re.compile(r'\{\{[^}]+\}\}')
+    history_for_claude = [
+        {"role": h["role"], "content": _MANYCHAT_VAR.sub("", h["content"]).strip()}
+        for h in history_full
+    ]
 
     returning = is_returning_user(history_full)
     user_msg_count = count_user_messages(req.subscriber_id)
@@ -568,10 +583,11 @@ async def chat(req: ChatRequest) -> JSONResponse:
 
     if detected_zip:
         location = resolve_zip(detected_zip)
-        context_parts.append(
-            f"Zip code: {detected_zip} ({location}). "
-            f"Refer to their area as '{location}', never as the zip number."
-        )
+        if location:
+            context_parts.append(
+                f"Zip code: {detected_zip} ({location}). "
+                f"Refer to their area as '{location}', never as the zip number."
+            )
 
     if returning:
         context_parts.append(
