@@ -532,7 +532,9 @@ async def chat(req: ChatRequest) -> JSONResponse:
     user_msg_count = count_user_messages(req.subscriber_id)
 
     # Zip: mensaje actual → historial de conversación → campo ManyChat
-    detected_zip = extract_zip(text) or _zip_in_history(history_full) or req.zip_code or ""
+    # Validar zip de ManyChat — puede llegar como placeholder sin resolver: {{cuf_14413596}}
+    mc_zip = extract_zip(req.zip_code) if req.zip_code else ""
+    detected_zip = extract_zip(text) or _zip_in_history(history_full) or mc_zip or ""
 
     # ── Detectar tipo de mensaje ──────────────────────────────────────────────
     image_sent      = is_image_or_attachment(text)
