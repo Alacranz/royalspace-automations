@@ -588,6 +588,14 @@ async def chat(req: ChatRequest) -> JSONResponse:
             "Create excitement and strong motivation to call us to discuss their specific case."
         )
 
+    if is_business_hours():
+        context_parts.append(
+            "AVAILABILITY: We are currently OPEN and available right now (hours: Mon-Fri 9AM-7PM EST, Sat 9AM-5PM EST). "
+            "If the user asks whether you are available, open, or working today — answer YES directly and warmly, then invite them to call. "
+            "Example (ES): 'Sí, estamos disponibles ahora mismo. Llámanos y te conectamos con un dentista en tu área.' "
+            "Example (EN): 'Yes, we are available right now. Give us a call and we'll connect you with a dentist in your area.'"
+        )
+
     if not is_business_hours():
         next_open = get_next_open_label(final_lang)
         if final_lang == "en":
