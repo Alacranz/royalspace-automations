@@ -566,14 +566,13 @@ async def chat(req: ChatRequest) -> JSONResponse:
     if detected_lang in ("en", "es"):
         set_subscriber_language(req.subscriber_id, detected_lang)
         final_lang = detected_lang
-        lang_confident = True
+        _lang_source = "current"   # señal fuerte: el mensaje actual tiene marcadores claros
     elif stored_lang in ("en", "es"):
         final_lang = stored_lang
-        lang_confident = True
+        _lang_source = "stored"    # señal débil: idioma de conversación previa
     else:
-        # Sin señal — default English (más seguro para mensajes ambiguos en mercado US)
         final_lang = "en"
-        lang_confident = False
+        _lang_source = "default"   # sin señal: Claude decide
 
     # Última respuesta del bot — para forzar variación explícita
     last_assistant_msg = next(
@@ -670,18 +669,31 @@ async def chat(req: ChatRequest) -> JSONResponse:
             f"FUERA DE HORARIO — responde EXACTAMENTE con este mensaje, sin agregar nada más: \"{oot_msg}\""
         )
 
-    if not lang_confident:
-        context_parts.insert(0, (
-            "LANGUAGE DETECTION REQUIRED: No prior language signal for this user. "
-            "Read their current message carefully. "
-            "Zip codes, city names, short replies, or any ambiguous content → respond in ENGLISH. "
-            "Only respond in Spanish if their message clearly contains Spanish words. "
-            "Never mix languages."
-        ))
-    elif final_lang == "en":
-        context_parts.insert(0, "LANGUAGE: This subscriber communicates in English. Your entire response MUST be in English only. No Spanish words.")
+    if _lang_source == "current":
+        # Señal fuerte: el mensaje actual tiene marcadores claros → mandato estricto
+        if final_lang == "en":
+            context_parts.insert(0, "LANGUAGE: The user is writing in English. Respond 100% in English. No Spanish words.")
+        else:
+            context_parts.insert(0, "LANGUAGE: El usuario está escribiendo en español. Responde 100% en español. Sin palabras en inglés.")
+    elif _lang_source == "stored":
+        # Señal débil: idioma de conversación previa → sugerencia, Claude puede corregir
+        if final_lang == "en":
+            context_parts.insert(0, (
+                "LANGUAGE PREFERENCE: This user has previously communicated in English. "
+                "Respond in English unless their current message clearly uses Spanish words."
+            ))
+        else:
+            context_parts.insert(0, (
+                "PREFERENCIA DE IDIOMA: Este usuario ha comunicado antes en español. "
+                "Responde en español a menos que su mensaje actual use palabras claramente en inglés."
+            ))
     else:
-        context_parts.insert(0, "LANGUAGE: Este suscriptor se comunica en español. Tu respuesta DEBE ser completamente en español. Sin palabras en inglés.")
+        # Sin señal → Claude decide, con sesgo hacia inglés para mensajes ambiguos
+        context_parts.insert(0, (
+            "LANGUAGE: Unknown. Read their current message carefully. "
+            "Zip codes, city names, numbers, or short replies → respond in English. "
+            "Clear Spanish words → respond in Spanish. Never mix languages."
+        ))
 
     system = SYSTEM_PROMPT
     if context_parts:
