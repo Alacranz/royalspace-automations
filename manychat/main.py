@@ -46,11 +46,11 @@ MAX_TOKENS         = 250
 MSGS_BEFORE_ZIP_INSIST = 3  # mensajes sin zip antes de insistir más
 
 SYSTEM_PROMPT = """LANGUAGE RULE — ABSOLUTE PRIORITY (overrides everything else):
-- Detect the language of the user's latest message and respond ENTIRELY in that language.
+- Read the user's CURRENT message AND the full conversation history to determine their language.
 - English message → respond 100% in English. Zero Spanish words.
 - Spanish message → respond 100% in Spanish. Zero English words.
-- Mixed languages → use whichever language is dominant in their latest message.
-- This is non-negotiable. Never default to Spanish. Never mix languages in a single response.
+- Ambiguous message (zip code, city name, "Yes", "Ok", numbers) → look at the rest of the conversation. If prior messages were in English, respond in English. If in Spanish, respond in Spanish. If no prior context, respond in ENGLISH.
+- This is non-negotiable. When in doubt, default to ENGLISH, not Spanish. Never mix languages in a single response.
 
 You are part of a team that connects people in the United States with trusted dentists in their area.
 
@@ -566,8 +566,14 @@ async def chat(req: ChatRequest) -> JSONResponse:
     if detected_lang in ("en", "es"):
         set_subscriber_language(req.subscriber_id, detected_lang)
         final_lang = detected_lang
+        lang_confident = True
+    elif stored_lang in ("en", "es"):
+        final_lang = stored_lang
+        lang_confident = True
     else:
-        final_lang = stored_lang or "es"
+        # Sin señal — default English (más seguro para mensajes ambiguos en mercado US)
+        final_lang = "en"
+        lang_confident = False
 
     # Última respuesta del bot — para forzar variación explícita
     last_assistant_msg = next(
@@ -664,7 +670,15 @@ async def chat(req: ChatRequest) -> JSONResponse:
             f"FUERA DE HORARIO — responde EXACTAMENTE con este mensaje, sin agregar nada más: \"{oot_msg}\""
         )
 
-    if final_lang == "en":
+    if not lang_confident:
+        context_parts.insert(0, (
+            "LANGUAGE DETECTION REQUIRED: No prior language signal for this user. "
+            "Read their current message carefully. "
+            "Zip codes, city names, short replies, or any ambiguous content → respond in ENGLISH. "
+            "Only respond in Spanish if their message clearly contains Spanish words. "
+            "Never mix languages."
+        ))
+    elif final_lang == "en":
         context_parts.insert(0, "LANGUAGE: This subscriber communicates in English. Your entire response MUST be in English only. No Spanish words.")
     else:
         context_parts.insert(0, "LANGUAGE: Este suscriptor se comunica en español. Tu respuesta DEBE ser completamente en español. Sin palabras en inglés.")
