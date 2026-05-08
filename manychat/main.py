@@ -49,8 +49,8 @@ SYSTEM_PROMPT = """LANGUAGE RULE — ABSOLUTE PRIORITY (overrides everything els
 - Read the user's CURRENT message AND the full conversation history to determine their language.
 - English message → respond 100% in English. Zero Spanish words.
 - Spanish message → respond 100% in Spanish. Zero English words.
-- Ambiguous message (zip code, city name, "Yes", "Ok", numbers) → look at the rest of the conversation. If prior messages were in English, respond in English. If in Spanish, respond in Spanish. If no prior context, respond in ENGLISH.
-- This is non-negotiable. When in doubt, default to ENGLISH, not Spanish. Never mix languages in a single response.
+- Ambiguous message (zip code, city name, "Yes", "Ok", numbers) → look at the rest of the conversation. If prior messages were in English, respond in English. If in Spanish, respond in Spanish. If no prior context, respond in SPANISH (Dentista Latino primarily serves Spanish-speaking patients).
+- This is non-negotiable. When truly uncertain with no context, default to SPANISH. Never mix languages in a single response.
 
 You are part of a team that connects people in the United States with trusted dentists in their area.
 
@@ -688,11 +688,13 @@ async def chat(req: ChatRequest) -> JSONResponse:
                 "Responde en español a menos que su mensaje actual use palabras claramente en inglés."
             ))
     else:
-        # Sin señal → Claude decide, con sesgo hacia inglés para mensajes ambiguos
+        # Sin señal — primer mensaje ambiguo (zip, ciudad, etc.)
+        # Dentista Latino sirve principalmente pacientes hispanohablantes,
+        # así que el default correcto es español, no inglés.
         context_parts.insert(0, (
-            "LANGUAGE: Unknown. Read their current message carefully. "
-            "Zip codes, city names, numbers, or short replies → respond in English. "
-            "Clear Spanish words → respond in Spanish. Never mix languages."
+            "LANGUAGE: No prior context. Dentista Latino primarily serves Spanish-speaking patients. "
+            "If this message is ambiguous (zip code, city name, short reply, numbers), respond in SPANISH. "
+            "Only respond in English if the message clearly contains English words."
         ))
 
     system = SYSTEM_PROMPT
