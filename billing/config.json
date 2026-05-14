@@ -81,6 +81,17 @@
       "due_days": 30,
       "send_invoice": false,
       "active": true
+    },
+    {
+      "ringba_buyer_name": "Hypertarget Marketing",
+      "ringba_buyer_sub_id": "502",
+      "zoho_contact_name": "Hypertarget Marketing",
+      "zoho_item_name": "Dental",
+      "discord_name": "Hypertarget",
+      "billing_frequency": 1,
+      "due_days": 15,
+      "send_invoice": false,
+      "active": true
     }
   ],
 
@@ -125,6 +136,12 @@
       "ringba_buyer_name": "ClickDealer",
       "ringba_buyer_sub_id": "1521",
       "discord_name": "ClickDealer",
+      "active": true
+    },
+    {
+      "ringba_buyer_name": "Hypertarget Marketing",
+      "ringba_buyer_sub_id": "502",
+      "discord_name": "Hypertarget",
       "active": true
     }
   ]
