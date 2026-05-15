@@ -18,6 +18,7 @@ Sheet columns (A–J):
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime
 
 import gspread
@@ -155,9 +156,23 @@ def refresh_statuses(spreadsheet_id: str, creds_json: str) -> int:
     """
     Sweeps all PENDIENTE rows and updates any whose due date has passed to VENCIDO.
     Returns the number of rows updated.
+    Retries up to 3 times with 65s sleep on 429 rate-limit errors.
     """
-    ws = _open_sheet(spreadsheet_id, creds_json)
-    all_values = ws.get_all_values()
+    for attempt in range(3):
+        try:
+            ws = _open_sheet(spreadsheet_id, creds_json)
+            all_values = ws.get_all_values()
+            break
+        except gspread.exceptions.APIError as e:
+            if "429" in str(e) and attempt < 2:
+                wait = 65
+                print(f"  [Sheets] Rate limit hit — waiting {wait}s before retry {attempt + 2}/3...")
+                time.sleep(wait)
+            else:
+                raise
+    else:
+        return 0
+
     today = datetime.utcnow().date()
     updated = 0
 

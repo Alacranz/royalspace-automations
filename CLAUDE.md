@@ -84,11 +84,14 @@ royalspace-automations/
 │   ├── daily_report.py                ← costos Railway + Anthropic → Discord
 │   └── executive_brief.py             ← brief ejecutivo diario con Claude Haiku
 │
-└── manychat/
-    ├── main.py                        ← FastAPI webhook para ManyChat
-    ├── requirements.txt
-    ├── Procfile
-    └── railway.json
+├── manychat/
+│   ├── main.py                        ← FastAPI webhook para ManyChat
+│   ├── requirements.txt
+│   ├── Procfile
+│   └── railway.json
+│
+└── docs/
+    └── roadmap.md                     ← Estrategia, próximos pasos y "segundo cerebro"
 ```
 
 **Ignorado por git:**

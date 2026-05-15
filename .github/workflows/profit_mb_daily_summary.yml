@@ -42,3 +42,4 @@ jobs:
           META_API_VERSION:            ${{ vars.META_API_VERSION || 'v25.0' }}
           DISCORD_WEBHOOK_MB_INTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_INTERNAL }}
           DISCORD_WEBHOOK_MB_EXTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_EXTERNAL }}
+          SENTRY_DSN:                  ${{ secrets.SENTRY_DSN }}

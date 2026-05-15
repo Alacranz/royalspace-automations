@@ -308,7 +308,10 @@ def run() -> None:
 
     # ── Refresh invoice statuses in Sheet (PENDIENTE → VENCIDO if overdue) ────
     print("\n[Sheets] Refreshing invoice statuses...")
-    refresh_statuses(spreadsheet_id, gsheets_creds)
+    try:
+        refresh_statuses(spreadsheet_id, gsheets_creds)
+    except Exception as e:
+        print(f"  [Sheets] refresh_statuses failed: {e}")
 
     # ── Discord summary ────────────────────────────────────────────────────────
     _send_discord_summary(discord_webhook, current_ym, invoice_date, results)

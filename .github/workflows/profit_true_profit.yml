@@ -48,4 +48,5 @@ jobs:
           DISCORD_WEBHOOK_MOD:         ${{ secrets.DISCORD_WEBHOOK_MOD }}
           DISCORD_WEBHOOK_MB_INTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_INTERNAL }}
           DISCORD_WEBHOOK_MB_EXTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_EXTERNAL }}
+          SENTRY_DSN:                  ${{ secrets.SENTRY_DSN }}
           FORCE_RUN:                   ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}

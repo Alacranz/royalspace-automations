@@ -48,6 +48,14 @@ WEBHOOK_MOD       = os.environ["DISCORD_WEBHOOK_MOD"]
 WEBHOOK_INTERNAL  = os.environ["DISCORD_WEBHOOK_MB_INTERNAL"]
 WEBHOOK_EXTERNAL  = os.environ["DISCORD_WEBHOOK_MB_EXTERNAL"]
 
+import sentry_sdk
+sentry_dsn = os.environ.get("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        traces_sample_rate=1.0,
+    )
+
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
 

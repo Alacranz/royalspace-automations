@@ -146,8 +146,15 @@ def log_invoice_deal(
         timeout=30,
     )
     resp.raise_for_status()
-    deal_id = resp.json()["data"][0]["details"]["id"]
-    print(f"  [CRM] Created deal: {invoice_number} (${revenue:,.2f}) → {deal_id}")
+    resp_data = resp.json().get("data", [{}])
+    details = resp_data[0].get("details", {}) if resp_data else {}
+    deal_id = details.get("id", "")
+    if deal_id:
+        print(f"  [CRM] Created deal: {invoice_number} (${revenue:,.2f}) → {deal_id}")
+    else:
+        status = resp_data[0].get("status", "unknown") if resp_data else "unknown"
+        code   = resp_data[0].get("code",   "unknown") if resp_data else "unknown"
+        print(f"  [CRM] Deal response: status={status} code={code} — no id returned for {invoice_number}")
     return deal_id
 
 
