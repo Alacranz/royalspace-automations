@@ -41,9 +41,11 @@ from pydantic import BaseModel
 
 ANTHROPIC_API_KEY  = os.environ["ANTHROPIC_API_KEY"]
 DB_PATH            = os.environ.get("DB_PATH", "manychat/conversations.db")
-MAX_HISTORY        = 30   # mensajes que lee Claude
+MAX_HISTORY        = 15   # mensajes que lee Claude (reducido de 30 → baja costo de historial)
 MAX_TOKENS         = 250
 MSGS_BEFORE_ZIP_INSIST = 3  # mensajes sin zip antes de insistir más
+
+_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 SYSTEM_PROMPT = """LANGUAGE RULE — ABSOLUTE PRIORITY (overrides everything else):
 - Read the user's CURRENT message AND the full conversation history to determine their language.
@@ -705,19 +707,28 @@ async def chat(req: ChatRequest) -> JSONResponse:
             "Only respond in English if the message clearly contains English words."
         ))
 
-    system = SYSTEM_PROMPT
+    # System prompt: parte estática cacheada + contexto dinámico sin cachear
+    system_blocks: list[dict] = [
+        {
+            "type": "text",
+            "text": SYSTEM_PROMPT,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
     if context_parts:
-        system += "\n\nCurrent user context:\n- " + "\n- ".join(context_parts)
+        system_blocks.append({
+            "type": "text",
+            "text": "\n\nCurrent user context:\n- " + "\n- ".join(context_parts),
+        })
 
     messages = history_for_claude + [{"role": "user", "content": text_for_claude}]
 
     # ── Claude ────────────────────────────────────────────────────────────────
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     try:
-        result = client.messages.create(
+        result = _client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=MAX_TOKENS,
-            system=system,
+            system=system_blocks,
             messages=messages,
         )
         reply = result.content[0].text.strip()
