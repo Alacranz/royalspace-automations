@@ -20,9 +20,11 @@ Actions:
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import sqlite3
+import time as _time
 import unicodedata
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -46,6 +48,10 @@ MAX_TOKENS         = 250
 MSGS_BEFORE_ZIP_INSIST = 3  # mensajes sin zip antes de insistir más
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+META_PIXEL_ID          = os.environ.get("META_PIXEL_ID", "")
+META_CONVERSIONS_TOKEN = os.environ.get("META_CONVERSIONS_TOKEN", "")
+RINGBA_WEBHOOK_SECRET  = os.environ.get("RINGBA_WEBHOOK_SECRET", "")
 
 SYSTEM_PROMPT = """LANGUAGE RULE — ABSOLUTE PRIORITY (overrides everything else):
 - Read the user's CURRENT message AND the full conversation history to determine their language.
@@ -795,6 +801,74 @@ async def stats(date: str = "") -> JSONResponse:
     })
 
 
+# ── Ringba → Meta Conversions API ─────────────────────────────────────────────
+
+def _hash_phone(raw: str) -> str:
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 10:
+        digits = "1" + digits
+    return hashlib.sha256(digits.encode()).hexdigest()
+
+
+def _extract_phone(payload: dict) -> str:
+    for key in ("CallerId", "caller_id", "ANI", "InboundCallId", "Number", "caller_number", "phone"):
+        val = str(payload.get(key, "")).strip()
+        if val and len(re.sub(r"\D", "", val)) >= 10:
+            return val
+    return ""
+
+
+@app.post("/ringba/webhook")
+async def ringba_webhook(request: Request) -> JSONResponse:
+    if RINGBA_WEBHOOK_SECRET:
+        token = request.query_params.get("token", "")
+        if token != RINGBA_WEBHOOK_SECRET:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    print(f"[Ringba] Webhook received — keys: {list(payload.keys())}")
+
+    if not META_PIXEL_ID or not META_CONVERSIONS_TOKEN:
+        print("[Ringba] META_PIXEL_ID or META_CONVERSIONS_TOKEN not set — skipping")
+        return JSONResponse({"status": "skipped", "reason": "meta not configured"})
+
+    phone = _extract_phone(payload)
+    if not phone:
+        print(f"[Ringba] No phone found in payload — keys: {list(payload.keys())}")
+        return JSONResponse({"status": "skipped", "reason": "no phone found"})
+
+    meta_version = os.environ.get("META_API_VERSION") or "v25.0"
+    url = f"https://graph.facebook.com/{meta_version}/{META_PIXEL_ID}/events"
+
+    event_data: dict = {
+        "event_name": "Lead",
+        "event_time": int(_time.time()),
+        "action_source": "phone_call",
+        "user_data": {"ph": [_hash_phone(phone)]},
+    }
+    body: dict = {"data": [event_data]}
+    test_code = os.environ.get("META_TEST_EVENT_CODE", "")
+    if test_code:
+        body["test_event_code"] = test_code
+
+    try:
+        resp = http_requests.post(
+            url,
+            params={"access_token": META_CONVERSIONS_TOKEN},
+            json=body,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        events_received = resp.json().get("events_received", 0)
+        print(f"[Ringba] Meta received {events_received} event(s) for ...{phone[-4:]}")
+        return JSONResponse({"status": "ok", "events_received": events_received})
+    except Exception as e:
+        print(f"[Ringba] Meta Conversions API error: {e}")
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
 
 _LOGIN_PAGE = """<!DOCTYPE html>
