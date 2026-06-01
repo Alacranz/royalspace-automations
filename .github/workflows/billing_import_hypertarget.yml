@@ -1,0 +1,33 @@
+name: Billing — Import Hypertarget (one-time)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r billing/requirements.txt
+
+      - name: Import Hypertarget invoices → PAGOS 2026
+        env:
+          ZOHO_CLIENT_ID:              ${{ secrets.ZOHO_CLIENT_ID }}
+          ZOHO_CLIENT_SECRET:          ${{ secrets.ZOHO_CLIENT_SECRET }}
+          ZOHO_REFRESH_TOKEN:          ${{ secrets.ZOHO_REFRESH_TOKEN }}
+          ZOHO_ORG_ID:                 "771911284"
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          BILLING_SPREADSHEET_ID:      ${{ secrets.BILLING_SPREADSHEET_ID }}
+        run: python billing/import_hypertarget.py
+
+      - name: Refresh dashboard
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          BILLING_SPREADSHEET_ID:      ${{ secrets.BILLING_SPREADSHEET_ID }}
+        run: python billing/dashboard.py
