@@ -11,7 +11,7 @@ name: Profit — True Profit + MB Alerts
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "5 * * * *"   # 5 min pasada cada hora — evita colisión con profit_alerts (":00")
   workflow_dispatch:
     inputs:
       force_run:

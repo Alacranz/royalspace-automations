@@ -13,7 +13,7 @@ name: Profit — Alertas Inteligentes
 
 on:
   schedule:
-    - cron: "0 * * * *"   # cada hora en punto
+    - cron: "0 * * * *"   # cada hora en punto (:00)
   workflow_dispatch:
 
 env:
