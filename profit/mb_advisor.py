@@ -52,8 +52,26 @@ WEBHOOK_MOD      = os.environ["DISCORD_WEBHOOK_MOD"]
 WEBHOOK_INTERNAL = os.environ["DISCORD_WEBHOOK_MB_INTERNAL"]
 WEBHOOK_EXTERNAL = os.environ["DISCORD_WEBHOOK_MB_EXTERNAL"]
 
+# Webhooks individuales por MB (opcional)
+_MB_WEBHOOKS: dict[str, str] = {}
+try:
+    _raw = os.environ.get("DISCORD_WEBHOOKS_MB_JSON", "")
+    if _raw:
+        _MB_WEBHOOKS = json.loads(_raw)
+except Exception as _e:
+    print(f"[Config] DISCORD_WEBHOOKS_MB_JSON inválido: {_e}")
+
 CONFIG_PATH = Path(__file__).parent / "config.json"
 TZ_NAME     = "America/New_York"
+
+
+def _webhook_for(mb: dict) -> str:
+    """Canal individual del MB si existe, si no el canal compartido por categoría."""
+    name = mb.get("display_name", "")
+    if name in _MB_WEBHOOKS:
+        return _MB_WEBHOOKS[name]
+    cat = str(mb.get("category") or "").lower()
+    return WEBHOOK_INTERNAL if cat == "internal" else WEBHOOK_EXTERNAL
 
 
 def fmt(v: float) -> str:
@@ -88,13 +106,15 @@ def generate_advice(mb_name: str, context: dict) -> str:
     Llama a Claude Haiku para generar recomendaciones accionables.
     context incluye: today, trend_7d, best_adsets, worst_adsets, status
     """
-    prompt = f"""Eres el advisor de performance de Royalspace (dental pay-per-call).
+    prompt = f"""Eres el advisor de performance de Royalspace, agencia de marketing digital en el sector dental.
 Media buyer: {mb_name}
 Spend: {context['spend_today']} | Profit: {context['profit_today']} ({context['status']}) | CVR: {context['cvr']:.1%} | Tendencia: {context['trend']}
 Peores adsets: {context['worst_adsets']}
 Mejores adsets: {context['best_adsets']}
 
-Da exactamente 2 acciones concretas para hoy. Sin headers, sin markdown, sin numeración. Máximo 2 líneas cortas en español."""
+Da exactamente 2 acciones concretas para hoy. Sin headers, sin markdown, sin numeración. Máximo 2 líneas cortas en español.
+
+REGLA ABSOLUTA: Nunca uses estas palabras ni variantes: pay-per-call, pay per call, leadgen, lead gen, lead generation, afiliado, affiliate, payout, publisher, Ringba, pixel, tracking. Usa solo lenguaje estándar: presupuesto, conversiones, campañas, anuncios, resultados, rendimiento."""
 
     headers = {
         "x-api-key":         ANTHROPIC_KEY,
@@ -185,20 +205,17 @@ def main() -> None:
     spend_map = build_spend_map(META_TOKEN, META_VERSION, config, "today", include_private_groups=False)
 
     # ── Process each MB ───────────────────────────────────────────────────────
-    internal_msgs: list[str] = []
-    external_msgs: list[str] = []
-    summary_rows: list[str]  = []
+    summary_rows: list[str] = []
 
     for mb in config.get("media_buyers") or []:
         if not mb.get("active"):
             continue
 
-        name      = mb["display_name"]
-        key       = normalize_name(str(mb.get("publisher_name") or ""))
-        ad_id     = str(mb.get("facebook_ad_account_id") or "")
-        user_id   = mb.get("discord_user_id", "")
-        category  = str(mb.get("category") or "").lower()
-        mb_share  = float(mb.get("media_buyer_spend_share", 0.5))
+        name     = mb["display_name"]
+        key      = normalize_name(str(mb.get("publisher_name") or ""))
+        ad_id    = str(mb.get("facebook_ad_account_id") or "")
+        user_id  = mb.get("discord_user_id", "")
+        mb_share = float(mb.get("media_buyer_spend_share", 0.5))
 
         # Today data
         rd_today   = ringba_today.get(key) or {}
@@ -270,10 +287,12 @@ def main() -> None:
         if len(msg) > 1900:
             msg = msg[:1900] + "\n..."
 
-        if category == "internal":
-            internal_msgs.append(msg)
-        else:
-            external_msgs.append(msg)
+        # Enviar directamente al canal individual del MB (o al compartido como fallback)
+        try:
+            discord_send(_webhook_for(mb), msg)
+            print(f"  [{name}] ✓ Mensaje enviado a Discord")
+        except Exception as e:
+            print(f"  [{name}] Error enviando a Discord: {e}")
 
         summary_rows.append(
             f"{'✅' if status == 'PROFITABLE' else '⚠️' if status == 'LOW' else '❌'} "
@@ -281,19 +300,6 @@ def main() -> None:
         )
 
         print(f"  [{name}] ✓ {status} | Spend: {fmt(spend)} | Profit: {fmt(mb_profit)}")
-
-    # ── Send Discord messages ─────────────────────────────────────────────────
-    if internal_msgs:
-        header = "**📊 MB PERFORMANCE ADVISOR — Análisis del día**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        discord_send(WEBHOOK_INTERNAL, header)
-        for msg in internal_msgs:
-            discord_send(WEBHOOK_INTERNAL, msg)
-
-    if external_msgs:
-        header = "**📊 MB PERFORMANCE ADVISOR — Análisis del día**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        discord_send(WEBHOOK_EXTERNAL, header)
-        for msg in external_msgs:
-            discord_send(WEBHOOK_EXTERNAL, msg)
 
     # Summary to MOD
     if summary_rows:
@@ -304,7 +310,7 @@ def main() -> None:
         summary += "\n```"
         discord_send(WEBHOOK_MOD, summary)
 
-    print(f"\nAdvisor completado: {len(internal_msgs)} internos, {len(external_msgs)} externos.")
+    print(f"\nAdvisor completado: {len(summary_rows)} MB(s) procesados.")
 
 
 if __name__ == "__main__":

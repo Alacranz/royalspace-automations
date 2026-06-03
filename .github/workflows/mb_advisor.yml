@@ -31,7 +31,8 @@ jobs:
           META_ACCESS_TOKEN:         ${{ secrets.META_ACCESS_TOKEN }}
           META_API_VERSION:          ${{ vars.META_API_VERSION }}
           ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
-          DISCORD_WEBHOOK_MOD:       ${{ secrets.DISCORD_WEBHOOK_MOD }}
+          DISCORD_WEBHOOK_MOD:         ${{ secrets.DISCORD_WEBHOOK_MOD }}
           DISCORD_WEBHOOK_MB_INTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_INTERNAL }}
           DISCORD_WEBHOOK_MB_EXTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_EXTERNAL }}
+          DISCORD_WEBHOOKS_MB_JSON:    ${{ secrets.DISCORD_WEBHOOKS_MB_JSON }}
         run: python profit/mb_advisor.py
