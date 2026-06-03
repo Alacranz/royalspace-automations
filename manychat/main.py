@@ -847,18 +847,18 @@ def _extract_phone(payload: dict) -> str:
 
 @app.post("/ringba/webhook")
 async def ringba_webhook(request: Request) -> JSONResponse:
-    if RINGBA_WEBHOOK_SECRET:
-        token = request.query_params.get("token", "")
-        if token != RINGBA_WEBHOOK_SECRET:
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-
     try:
         payload = await request.json()
     except Exception:
         payload = {}
 
     keys_str = ",".join(payload.keys())
-    print(f"[Ringba] Webhook received — keys: {keys_str}")
+    token_received = request.query_params.get("token", "")
+    print(f"[Ringba] Webhook received — keys: {keys_str}, token_ok: {token_received == RINGBA_WEBHOOK_SECRET or not RINGBA_WEBHOOK_SECRET}")
+
+    if RINGBA_WEBHOOK_SECRET and token_received != RINGBA_WEBHOOK_SECRET:
+        _log_ringba_event("", "unauthorized", meta_error="token_mismatch", payload_keys=keys_str)
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
 
     if not META_PIXEL_ID or not META_CONVERSIONS_TOKEN:
         print("[Ringba] META_PIXEL_ID or META_CONVERSIONS_TOKEN not set — skipping")
