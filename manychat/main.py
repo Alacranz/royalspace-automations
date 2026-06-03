@@ -867,8 +867,11 @@ async def ringba_webhook(request: Request) -> JSONResponse:
 
     phone = _extract_phone(payload)
     if not phone:
-        print(f"[Ringba] No phone found in payload — keys: {keys_str}")
-        _log_ringba_event("", "skipped", meta_error="no phone found", payload_keys=keys_str)
+        # Log the raw CallerID value to diagnose what Ringba actually sends
+        raw_caller = str(payload.get("CallerId") or payload.get("caller_id") or payload.get("ANI") or "")[:80]
+        debug_msg = f"no phone found. keys={keys_str} | CallerId={raw_caller!r}"
+        print(f"[Ringba] {debug_msg}")
+        _log_ringba_event("", "skipped", meta_error=debug_msg, payload_keys=keys_str)
         return JSONResponse({"status": "skipped", "reason": "no phone found"})
 
     phone_last4 = phone[-4:]
