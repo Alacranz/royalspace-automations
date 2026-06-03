@@ -306,6 +306,18 @@ def init_db() -> None:
                 updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Registro de eventos Ringba → Meta Conversions API
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ringba_events (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                phone_last4     TEXT,
+                status          TEXT,
+                events_received INTEGER DEFAULT 0,
+                meta_error      TEXT,
+                payload_keys    TEXT
+            )
+        """)
         conn.commit()
 
 
@@ -803,6 +815,21 @@ async def stats(date: str = "") -> JSONResponse:
 
 # ── Ringba → Meta Conversions API ─────────────────────────────────────────────
 
+def _log_ringba_event(
+    phone_last4: str,
+    status: str,
+    events_received: int = 0,
+    meta_error: str = "",
+    payload_keys: str = "",
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO ringba_events (phone_last4, status, events_received, meta_error, payload_keys)"
+            " VALUES (?,?,?,?,?)",
+            (phone_last4, status, events_received, meta_error, payload_keys),
+        )
+
+
 def _hash_phone(raw: str) -> str:
     digits = re.sub(r"\D", "", raw)
     if len(digits) == 10:
@@ -830,17 +857,21 @@ async def ringba_webhook(request: Request) -> JSONResponse:
     except Exception:
         payload = {}
 
-    print(f"[Ringba] Webhook received — keys: {list(payload.keys())}")
+    keys_str = ",".join(payload.keys())
+    print(f"[Ringba] Webhook received — keys: {keys_str}")
 
     if not META_PIXEL_ID or not META_CONVERSIONS_TOKEN:
         print("[Ringba] META_PIXEL_ID or META_CONVERSIONS_TOKEN not set — skipping")
+        _log_ringba_event("", "skipped", meta_error="meta not configured", payload_keys=keys_str)
         return JSONResponse({"status": "skipped", "reason": "meta not configured"})
 
     phone = _extract_phone(payload)
     if not phone:
-        print(f"[Ringba] No phone found in payload — keys: {list(payload.keys())}")
+        print(f"[Ringba] No phone found in payload — keys: {keys_str}")
+        _log_ringba_event("", "skipped", meta_error="no phone found", payload_keys=keys_str)
         return JSONResponse({"status": "skipped", "reason": "no phone found"})
 
+    phone_last4 = phone[-4:]
     meta_version = os.environ.get("META_API_VERSION") or "v25.0"
     url = f"https://graph.facebook.com/{meta_version}/{META_PIXEL_ID}/events"
 
@@ -864,11 +895,67 @@ async def ringba_webhook(request: Request) -> JSONResponse:
         )
         resp.raise_for_status()
         events_received = resp.json().get("events_received", 0)
-        print(f"[Ringba] Meta received {events_received} event(s) for ...{phone[-4:]}")
+        print(f"[Ringba] Meta received {events_received} event(s) for ...{phone_last4}")
+        _log_ringba_event(phone_last4, "ok", events_received=events_received, payload_keys=keys_str)
         return JSONResponse({"status": "ok", "events_received": events_received})
     except Exception as e:
-        print(f"[Ringba] Meta Conversions API error: {e}")
-        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
+        err = str(e)
+        print(f"[Ringba] Meta Conversions API error: {err}")
+        _log_ringba_event(phone_last4, "error", meta_error=err[:500], payload_keys=keys_str)
+        return JSONResponse({"status": "error", "detail": err}, status_code=500)
+
+
+@app.get("/ringba/stats")
+async def ringba_stats() -> JSONResponse:
+    now      = datetime.now(timezone.utc)
+    today    = now.strftime("%Y-%m-%d")
+    week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    with get_conn() as conn:
+        def q(sql, *args):
+            return conn.execute(sql, args).fetchone()[0] or 0
+
+        total      = q("SELECT COUNT(*) FROM ringba_events")
+        total_ok   = q("SELECT COUNT(*) FROM ringba_events WHERE status='ok'")
+        today_tot  = q("SELECT COUNT(*) FROM ringba_events WHERE created_at LIKE ?", f"{today}%")
+        today_ok   = q("SELECT COUNT(*) FROM ringba_events WHERE status='ok' AND created_at LIKE ?", f"{today}%")
+        week_tot   = q("SELECT COUNT(*) FROM ringba_events WHERE date(created_at) >= ?", week_ago)
+        week_ok    = q("SELECT COUNT(*) FROM ringba_events WHERE status='ok' AND date(created_at) >= ?", week_ago)
+
+        last_row = conn.execute(
+            "SELECT created_at, phone_last4, status, events_received, meta_error"
+            " FROM ringba_events ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+
+        recent = conn.execute(
+            "SELECT created_at, phone_last4, status, events_received, meta_error"
+            " FROM ringba_events ORDER BY created_at DESC LIMIT 20"
+        ).fetchall()
+
+    # Verify Meta pixel is active
+    meta_pixel: dict = {}
+    if META_PIXEL_ID and META_CONVERSIONS_TOKEN:
+        try:
+            mv = os.environ.get("META_API_VERSION") or "v25.0"
+            pr = http_requests.get(
+                f"https://graph.facebook.com/{mv}/{META_PIXEL_ID}",
+                params={"fields": "id,name,last_fired_time", "access_token": META_CONVERSIONS_TOKEN},
+                timeout=10,
+            )
+            meta_pixel = pr.json() if pr.ok else {"error": pr.text[:300]}
+        except Exception as ex:
+            meta_pixel = {"error": str(ex)}
+    else:
+        meta_pixel = {"error": "META_PIXEL_ID or META_CONVERSIONS_TOKEN not configured"}
+
+    return JSONResponse({
+        "all_time":   {"total": total,     "ok": total_ok},
+        "today":      {"total": today_tot, "ok": today_ok},
+        "last_7_days":{"total": week_tot,  "ok": week_ok},
+        "last_event": dict(last_row) if last_row else None,
+        "recent_20":  [dict(r) for r in recent],
+        "meta_pixel": meta_pixel,
+    })
 
 
 _LOGIN_PAGE = """<!DOCTYPE html>
