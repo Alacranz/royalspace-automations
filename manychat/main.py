@@ -932,30 +932,13 @@ async def ringba_stats() -> JSONResponse:
             " FROM ringba_events ORDER BY created_at DESC LIMIT 20"
         ).fetchall()
 
-    # Verify Meta pixel is active — use META_ACCESS_TOKEN (ads_read) to read pixel metadata
-    meta_pixel: dict = {}
-    read_token = os.environ.get("META_ACCESS_TOKEN", "")
-    if META_PIXEL_ID and read_token:
-        try:
-            mv = os.environ.get("META_API_VERSION") or "v25.0"
-            pr = http_requests.get(
-                f"https://graph.facebook.com/{mv}/{META_PIXEL_ID}",
-                params={"fields": "id,name,last_fired_time", "access_token": read_token},
-                timeout=10,
-            )
-            meta_pixel = pr.json() if pr.ok else {"error": pr.text[:300]}
-        except Exception as ex:
-            meta_pixel = {"error": str(ex)}
-    else:
-        meta_pixel = {"error": "META_PIXEL_ID or META_ACCESS_TOKEN not configured"}
-
     return JSONResponse({
-        "all_time":   {"total": total,     "ok": total_ok},
-        "today":      {"total": today_tot, "ok": today_ok},
-        "last_7_days":{"total": week_tot,  "ok": week_ok},
-        "last_event": dict(last_row) if last_row else None,
-        "recent_20":  [dict(r) for r in recent],
-        "meta_pixel": meta_pixel,
+        "all_time":    {"total": total,     "ok": total_ok},
+        "today":       {"total": today_tot, "ok": today_ok},
+        "last_7_days": {"total": week_tot,  "ok": week_ok},
+        "last_event":  dict(last_row) if last_row else None,
+        "recent_20":   [dict(r) for r in recent],
+        "note": "Verify historical events in Meta Events Manager → Data Sources → pixel → Events tab → Lead / Server",
     })
 
 
