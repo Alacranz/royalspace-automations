@@ -928,7 +928,7 @@ async def ringba_stats() -> JSONResponse:
         ).fetchone()
 
         recent = conn.execute(
-            "SELECT created_at, phone_last4, status, events_received, meta_error"
+            "SELECT created_at, phone_last4, status, events_received, meta_error, payload_keys"
             " FROM ringba_events ORDER BY created_at DESC LIMIT 20"
         ).fetchall()
 
