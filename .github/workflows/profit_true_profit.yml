@@ -19,6 +19,9 @@ on:
         required: false
         default: "true"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   true-profit:
     name: True Profit Report

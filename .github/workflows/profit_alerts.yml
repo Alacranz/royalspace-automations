@@ -16,6 +16,9 @@ on:
     - cron: "0 * * * *"   # cada hora en punto
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   alerts:
     name: Meta + Ringba Alerts

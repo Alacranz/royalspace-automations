@@ -9,6 +9,9 @@ on:
     - cron: "0 14 * * 1"   # 9:00 AM EST (UTC-5) · lunes
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   recordatorio:
     name: Recordatorio contabilidad

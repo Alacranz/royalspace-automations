@@ -11,6 +11,9 @@ on:
         description: "Mes a calcular (MM/YYYY) — ej: 03/2026"
         required: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   calcular:
     name: Calcular mes ${{ github.event.inputs.month }}

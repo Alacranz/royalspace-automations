@@ -12,6 +12,9 @@ on:
     - cron: "0 14 * * 1"        # 9:00 AM EST, todos los lunes
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   recordatorios:
     name: Recordatorios de cobro semanales

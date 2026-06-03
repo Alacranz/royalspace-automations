@@ -8,6 +8,9 @@ name: Billing — CRM Setup Inicial
 on:
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   crm-setup:
     name: Setup inicial Zoho CRM

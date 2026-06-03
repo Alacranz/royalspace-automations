@@ -9,6 +9,9 @@ on:
     - cron: "30 14 * * 1-6"
   workflow_dispatch: # permite ejecución manual desde GitHub
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   reporte-diario:
     name: Reporte de asistencia diaria

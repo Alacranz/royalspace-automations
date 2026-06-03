@@ -9,6 +9,9 @@ on:
     - cron: "0 14 1 * *"
   workflow_dispatch: # permite ejecución manual desde GitHub
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   reporte-mensual:
     name: Resumen mensual de asistencia

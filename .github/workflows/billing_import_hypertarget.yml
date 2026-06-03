@@ -3,6 +3,9 @@ name: Billing — Import Hypertarget (one-time)
 on:
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   import:
     runs-on: ubuntu-latest

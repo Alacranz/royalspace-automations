@@ -11,6 +11,9 @@ on:
     - cron: "0 12 * * 1-6"    # 8:00 AM VET (UTC-4), lunes–sábado
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   brief:
     name: Generar brief ejecutivo
