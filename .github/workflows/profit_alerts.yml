@@ -53,6 +53,7 @@ jobs:
           DISCORD_WEBHOOK_MOD:              ${{ secrets.DISCORD_WEBHOOK_MOD }}
           DISCORD_WEBHOOK_ALERTS_INTERNAL:  ${{ secrets.DISCORD_WEBHOOK_ALERTS_INTERNAL }}
           DISCORD_WEBHOOK_ALERTS_EXTERNAL:  ${{ secrets.DISCORD_WEBHOOK_ALERTS_EXTERNAL }}
+          DISCORD_WEBHOOKS_MB_JSON:         ${{ secrets.DISCORD_WEBHOOKS_MB_JSON }}
 
       - name: Guardar estado de alertas
         if: always()

@@ -50,6 +50,16 @@ WEBHOOK_EXTERNAL = os.environ["DISCORD_WEBHOOK_ALERTS_EXTERNAL"]
 CONFIG_PATH = Path(__file__).parent / "config.json"
 STATE_PATH  = Path(__file__).parent / "alerts_state" / "state.json"
 
+# Webhooks individuales por MB: {"display_name": "https://discord.com/..."}
+_MB_WEBHOOKS: dict[str, str] = {}
+try:
+    _raw = os.environ.get("DISCORD_WEBHOOKS_MB_JSON", "")
+    if _raw:
+        _MB_WEBHOOKS = json.loads(_raw)
+        print(f"[Config] {len(_MB_WEBHOOKS)} webhooks individuales de MB cargados")
+except Exception as _e:
+    print(f"[Config] DISCORD_WEBHOOKS_MB_JSON inválido: {_e}")
+
 # ── Umbrales Meta ─────────────────────────────────────────────────────────────
 CPR_MESSAGES = 0.90    # Objetivo Mensajes
 CPR_WEBSITE  = 10.00   # Objetivo Sitio Web / Landing
@@ -164,6 +174,11 @@ def mark_recovery(s: dict) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def webhook_for(mb: dict) -> str:
+    # Canal individual del MB tiene prioridad
+    name = mb.get("display_name", "")
+    if name in _MB_WEBHOOKS:
+        return _MB_WEBHOOKS[name]
+    # Fallback al canal compartido por categoría
     cat = str(mb.get("category") or "").lower()
     if cat == "internal":
         return WEBHOOK_INTERNAL
