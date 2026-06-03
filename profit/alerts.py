@@ -433,37 +433,34 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
         if has_alert:
             conn_flag = "!" if conn_dec in ("ALERT", "REPEAT", "WORSENED") else " "
             conv_flag = "!" if conv_dec in ("ALERT", "REPEAT", "WORSENED") else " "
+            hook_mb   = webhook_for(mb)
 
-            # ── Alerta interna → #mod (con datos completos) ───────────────────
-            msg_mod = "\n".join([
-                "```",
-                "⚠ RINGBA ALERTA",
-                "",
-                f"Publisher   : {mb_name}",
-                f"Llamadas    : Incoming {incoming}  Connected {connected}  Converted {converted}",
-                f"Conn Rate  {conn_flag}: {conn_rate:.1f}%  (minimo {CONN_RATE_MIN:.0f}%)",
-                f"Conv Rate  {conv_flag}: {conv_rate:.1f}%  (minimo {CONV_RATE_MIN:.0f}%)",
-                "",
-                "Accion      : Revisar grabaciones de llamadas",
-                "```",
-            ])
-            try:
-                discord_send(WEBHOOK_MOD, msg_mod)
-                print(f"  → Alerta Ringba enviada a #mod")
-            except Exception as e:
-                print(f"  → ERROR enviando a #mod: {e}")
-
-            # ── Alerta MB-facing → canal del MB (sin datos financieros) ───────
-            discord_uid = mb.get("discord_user_id", "")
-            hook_mb     = webhook_for(mb)
-            if hook_mb != WEBHOOK_MOD and discord_uid:
-                mention  = f"<@{discord_uid}>"
-                msg_mb   = mention + "\n" + "\n".join([
+            if hook_mb == WEBHOOK_MOD:
+                # Publishers privados (You, Angela) → #mod con todos los datos
+                msg = "\n".join([
+                    "```",
+                    "⚠ RINGBA ALERTA",
+                    "",
+                    f"Publisher   : {mb_name}",
+                    f"Llamadas    : Incoming {incoming}  Connected {connected}  Converted {converted}",
+                    f"Conn Rate  {conn_flag}: {conn_rate:.1f}%  (minimo {CONN_RATE_MIN:.0f}%)",
+                    f"Conv Rate  {conv_flag}: {conv_rate:.1f}%  (minimo {CONV_RATE_MIN:.0f}%)",
+                    "",
+                    "Accion      : Revisar grabaciones de llamadas",
+                    "```",
+                ])
+                try:
+                    discord_send(WEBHOOK_MOD, msg)
+                    print(f"  → Alerta Ringba enviada a #mod")
+                except Exception as e:
+                    print(f"  → ERROR enviando a #mod: {e}")
+            else:
+                # MBs internos/externos → solo al canal del MB, sin datos financieros
+                discord_uid = mb.get("discord_user_id", "")
+                mention     = f"<@{discord_uid}>\n" if discord_uid else ""
+                msg = mention + "\n".join([
                     "```",
                     "⚠ ALERTA DE RENDIMIENTO",
-                    "",
-                    "Tus llamadas de la ultima hora presentan metricas",
-                    "por debajo del minimo esperado.",
                     "",
                     f"Llamadas     : Entrantes {incoming}  Conectadas {connected}  Convertidas {converted}",
                     f"Conn Rate  {conn_flag}: {conn_rate:.1f}%   (minimo {CONN_RATE_MIN:.0f}%)",
@@ -474,10 +471,10 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
                     "```",
                 ])
                 try:
-                    discord_send(hook_mb, msg_mb)
-                    print(f"  → Alerta MB enviada a canal {mb.get('category', '')}")
+                    discord_send(hook_mb, msg)
+                    print(f"  → Alerta enviada al canal {mb.get('category', '')}")
                 except Exception as e:
-                    print(f"  → ERROR enviando alerta MB: {e}")
+                    print(f"  → ERROR enviando alerta: {e}")
 
             if conn_dec in ("ALERT", "REPEAT", "WORSENED"):
                 mark_alert(s_conn, conn_rate)
@@ -493,38 +490,23 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
                 parts.append(f"Conv Rate: {conv_rate:.1f}%")
                 mark_recovery(s_conv)
 
-            # ── Recuperación → #mod ───────────────────────────────────────────
-            msg_mod = "\n".join([
-                "```",
-                f"RECUPERADO — {mb_name}",
-                f"{' | '.join(parts)}  — volvio a rango normal",
-                "```",
-            ])
-            try:
-                discord_send(WEBHOOK_MOD, msg_mod)
-                print(f"  → Recuperación Ringba enviada a #mod")
-            except Exception as e:
-                print(f"  → ERROR enviando recuperación a #mod: {e}")
-
-            # ── Recuperación → canal del MB ───────────────────────────────────
-            discord_uid = mb.get("discord_user_id", "")
-            hook_mb     = webhook_for(mb)
-            if hook_mb != WEBHOOK_MOD and discord_uid:
-                mention  = f"<@{discord_uid}>"
-                msg_mb   = mention + "\n" + "\n".join([
+            hook_mb = webhook_for(mb)
+            if hook_mb == WEBHOOK_MOD:
+                # Publishers privados → #mod
+                msg = "\n".join([
                     "```",
-                    "✓ RENDIMIENTO RECUPERADO",
-                    "",
-                    "Tus metricas han vuelto a rango normal.",
-                    "",
-                    f"{' | '.join(parts)}",
+                    f"RECUPERADO — {mb_name}",
+                    f"{' | '.join(parts)}  — volvio a rango normal",
                     "```",
                 ])
                 try:
-                    discord_send(hook_mb, msg_mb)
-                    print(f"  → Recuperación MB enviada a canal {mb.get('category', '')}")
+                    discord_send(WEBHOOK_MOD, msg)
+                    print(f"  → Recuperación enviada a #mod")
                 except Exception as e:
-                    print(f"  → ERROR enviando recuperación MB: {e}")
+                    print(f"  → ERROR enviando recuperación a #mod: {e}")
+            else:
+                # MBs internos/externos → silencioso, solo actualizar estado
+                print(f"  → [{mb_name}] Recuperado — estado actualizado, sin notificacion al canal")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
