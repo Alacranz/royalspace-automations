@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -126,14 +127,33 @@ REGLA ABSOLUTA: Nunca uses estas palabras ni variantes: pay-per-call, pay per ca
         "max_tokens": 120,
         "messages":   [{"role": "user", "content": prompt}],
     }
-    resp = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers=headers,
-        json=body,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"].strip()
+
+    # Retry con backoff para errores transitorios (529 overloaded, 503, timeouts)
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=body,
+                timeout=30,
+            )
+            if resp.status_code in (429, 503, 529) and attempt < 2:
+                wait = 2 ** attempt  # 1s, 2s
+                print(f"  [Claude] {resp.status_code} — reintentando en {wait}s...")
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp.json()["content"][0]["text"].strip()
+        except (requests.exceptions.RequestException,) as e:
+            last_exc = e
+            if attempt < 2:
+                wait = 2 ** attempt
+                print(f"  [Claude] Error de red ({e}) — reintentando en {wait}s...")
+                time.sleep(wait)
+                continue
+            raise
+    raise last_exc or RuntimeError("Claude API: reintentos agotados")
 
 
 # ── Adset analysis ────────────────────────────────────────────────────────────
