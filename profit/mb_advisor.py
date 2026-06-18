@@ -143,7 +143,8 @@ REGLA ABSOLUTA: Nunca uses estas palabras ni variantes: pay-per-call, pay per ca
                 print(f"  [Claude] {resp.status_code} — reintentando en {wait}s...")
                 time.sleep(wait)
                 continue
-            resp.raise_for_status()
+            if not resp.ok:
+                raise RuntimeError(f"Claude API {resp.status_code}: {resp.text[:500]}")
             return resp.json()["content"][0]["text"].strip()
         except (requests.exceptions.RequestException,) as e:
             last_exc = e

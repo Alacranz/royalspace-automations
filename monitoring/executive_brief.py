@@ -81,7 +81,10 @@ def _claude_diagnosis(prompt: str) -> str:
             },
             timeout=30,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            detail = f"Claude API {resp.status_code}: {resp.text[:500]}"
+            print(f"  [Claude] Error: {detail}")
+            return f"Error al generar diagnóstico: {detail}"
         return resp.json()["content"][0]["text"].strip()
     except Exception as e:
         print(f"  [Claude] Error: {e}")
