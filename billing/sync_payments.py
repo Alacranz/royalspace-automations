@@ -118,14 +118,21 @@ def run() -> None:
 
     print(f"[Sync] {len(updates_needed)} factura(s) a actualizar en Sheet")
 
-    synced = 0
+    # Agrupar todas las actualizaciones en UNA sola llamada batch_update —
+    # evita exceder la cuota de escrituras/minuto de Google Sheets cuando
+    # hay varias facturas que sincronizar (antes: 1 llamada por factura).
+    batch_data = []
     for row_num, inv_number, payment_date, days in updates_needed:
         payment_str = datetime.strptime(payment_date, "%Y-%m-%d").strftime("%d/%m/%Y")
-        ws.update(f"G{row_num}:I{row_num}", [[payment_str, days, "PAGADO"]])
+        batch_data.append({"range": f"G{row_num}:I{row_num}", "values": [[payment_str, days, "PAGADO"]]})
         print(f"  ✓ {inv_number} → PAGADO ({payment_date}, {days} días)")
-        synced += 1
 
-        if crm_token:
+    if batch_data:
+        ws.batch_update(batch_data)
+    synced = len(updates_needed)
+
+    if crm_token:
+        for _, inv_number, payment_date, _ in updates_needed:
             try:
                 mark_deal_paid(crm_token, inv_number, payment_date)
             except Exception as e:

@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytz
 
@@ -190,7 +190,7 @@ def _calc_buyers(invoices: list[dict], pending_state: list[dict]) -> list[dict]:
 
 
 def _calc_active(invoices: list[dict]) -> list[dict]:
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
     active = []
     for inv in invoices:
         if inv["estado"] not in ("PENDIENTE", "VENCIDO"):
@@ -215,7 +215,7 @@ def _write_summary(spreadsheet, summary: dict, updated_at: str) -> None:
         ["Total Vencido",        f"${summary['total_overdue']:,.2f}",  ""],
         ["Revenue por Facturar", f"${summary['to_invoice']:,.2f}",     ""],
     ]
-    ws.update("A1:C6", data)
+    ws.update(data, "A1:C6")
     ws.format("A1:C1", {"textFormat": {"bold": True}, "backgroundColor": {"red": 0.13, "green": 0.13, "blue": 0.13}})
     ws.format("A2:A6", {"textFormat": {"bold": True}})
     print(f"  [Dashboard] DASHBOARD_SUMMARY written")
@@ -238,7 +238,7 @@ def _write_buyers(spreadsheet, buyers: list[dict]) -> None:
             b["invoice_count"],
             b["last_invoice"],
         ])
-    ws.update(f"A1:H{len(rows)}", rows)
+    ws.update(rows, f"A1:H{len(rows)}")
     ws.format("A1:H1", {"textFormat": {"bold": True}, "backgroundColor": {"red": 0.13, "green": 0.13, "blue": 0.13}})
     print(f"  [Dashboard] DASHBOARD_BUYERS written ({len(buyers)} buyers)")
 
@@ -260,15 +260,20 @@ def _write_active(spreadsheet, active: list[dict]) -> None:
             inv["estado"],
             inv["notas"],
         ])
-    ws.update(f"A1:H{len(rows)}", rows)
-    ws.format("A1:H1", {"textFormat": {"bold": True}, "backgroundColor": {"red": 0.13, "green": 0.13, "blue": 0.13}})
+    ws.update(rows, f"A1:H{len(rows)}")
 
-    # Color rows by status
+    # Agrupar todos los formatos (header + colores por status) en UNA sola
+    # llamada batch_format — evita exceder la cuota de escrituras/minuto de
+    # Google Sheets cuando hay muchas filas (antes: 1 llamada por fila).
+    formats = [
+        {"range": "A1:H1", "format": {"textFormat": {"bold": True}, "backgroundColor": {"red": 0.13, "green": 0.13, "blue": 0.13}}},
+    ]
     for i, inv in enumerate(active, start=2):
         if inv["estado"] == "VENCIDO":
-            ws.format(f"A{i}:H{i}", {"backgroundColor": {"red": 1.0, "green": 0.9, "blue": 0.9}})
+            formats.append({"range": f"A{i}:H{i}", "format": {"backgroundColor": {"red": 1.0, "green": 0.9, "blue": 0.9}}})
         elif inv["estado"] == "PENDIENTE":
-            ws.format(f"A{i}:H{i}", {"backgroundColor": {"red": 1.0, "green": 0.97, "blue": 0.85}})
+            formats.append({"range": f"A{i}:H{i}", "format": {"backgroundColor": {"red": 1.0, "green": 0.97, "blue": 0.85}}})
+    ws.batch_format(formats)
 
     print(f"  [Dashboard] DASHBOARD_INVOICES written ({len(active)} active invoices)")
 
