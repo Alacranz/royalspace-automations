@@ -55,6 +55,25 @@ HEADERS = [
 ]
 
 
+def _with_retry(fn, *args, max_attempts: int = 3, wait_seconds: int = 65, **kwargs):
+    """
+    Reintenta una llamada a gspread hasta max_attempts veces si Google
+    Sheets devuelve 429 (quota exceeded). Necesario porque invoice_generator
+    llama get_pending_state/set_pending_state una vez por buyer, y la cuota
+    de lectura/escritura por minuto es compartida a nivel de proyecto con
+    el resto de los scripts de billing.
+    """
+    for attempt in range(max_attempts):
+        try:
+            return fn(*args, **kwargs)
+        except gspread.exceptions.APIError as e:
+            if "429" in str(e) and attempt < max_attempts - 1:
+                print(f"  [Sheets] Rate limit hit — esperando {wait_seconds}s antes de reintentar ({attempt + 2}/{max_attempts})...")
+                time.sleep(wait_seconds)
+            else:
+                raise
+
+
 def _open_sheet(spreadsheet_id: str, creds_json: str):
     creds = Credentials.from_service_account_info(
         json.loads(creds_json), scopes=SCOPES
@@ -108,9 +127,9 @@ def log_invoice(
         notes,
     ]
 
-    ws.append_row(row, value_input_option="USER_ENTERED")
+    _with_retry(ws.append_row, row, value_input_option="USER_ENTERED")
     # Find the row we just wrote (last row)
-    all_values = ws.get_all_values()
+    all_values = _with_retry(ws.get_all_values)
     row_num = len(all_values)
     print(f"  [Sheets] Logged invoice {invoice_number} for {buyer_name} at row {row_num}")
     return row_num
@@ -128,7 +147,7 @@ def update_payment(
     Returns True if found and updated.
     """
     ws = _open_sheet(spreadsheet_id, creds_json)
-    all_values = ws.get_all_values()
+    all_values = _with_retry(ws.get_all_values)
 
     payment_str = datetime.strptime(payment_date, "%Y-%m-%d").strftime("%d/%m/%Y")
     invoice_col = 4  # E = index 4 (0-based)
@@ -144,7 +163,7 @@ def update_payment(
             except ValueError:
                 days = ""
 
-            ws.update(f"G{i}:J{i}", [[payment_str, days, "PAGADO", notes or row[9] if len(row) > 9 else ""]])
+            _with_retry(ws.update, [[payment_str, days, "PAGADO", notes or row[9] if len(row) > 9 else ""]], f"G{i}:J{i}")
             print(f"  [Sheets] Marked {invoice_number} as PAGADO on {payment_str} ({days} days)")
             return True
 
@@ -218,7 +237,7 @@ def get_pending_state(spreadsheet_id: str, creds_json: str, buyer_name: str) -> 
     {row, pending_revenue, from_month, to_month, months_accumulated, last_invoice_month}
     """
     ws = _open_pending_sheet(spreadsheet_id, creds_json)
-    all_values = ws.get_all_values()
+    all_values = _with_retry(ws.get_all_values)
     for i, row in enumerate(all_values[1:], start=2):
         if row and row[0] == buyer_name:
             return {
@@ -251,7 +270,7 @@ def set_pending_state(
 ) -> None:
     """Upserts the pending billing state for a buyer."""
     ws = _open_pending_sheet(spreadsheet_id, creds_json)
-    all_values = ws.get_all_values()
+    all_values = _with_retry(ws.get_all_values)
     now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     row_data = [
         buyer_name,
@@ -264,9 +283,9 @@ def set_pending_state(
     ]
     for i, row in enumerate(all_values[1:], start=2):
         if row and row[0] == buyer_name:
-            ws.update(f"A{i}:G{i}", [row_data])
+            _with_retry(ws.update, [row_data], f"A{i}:G{i}")
             return
-    ws.append_row(row_data, value_input_option="USER_ENTERED")
+    _with_retry(ws.append_row, row_data, value_input_option="USER_ENTERED")
 
 
 def clear_pending_state(
