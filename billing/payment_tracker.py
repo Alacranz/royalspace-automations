@@ -58,17 +58,17 @@ HEADERS = [
 def _with_retry(fn, *args, max_attempts: int = 3, wait_seconds: int = 65, **kwargs):
     """
     Reintenta una llamada a gspread hasta max_attempts veces si Google
-    Sheets devuelve 429 (quota exceeded). Necesario porque invoice_generator
-    llama get_pending_state/set_pending_state una vez por buyer, y la cuota
-    de lectura/escritura por minuto es compartida a nivel de proyecto con
-    el resto de los scripts de billing.
+    Sheets devuelve 429 (quota exceeded) o 503 (service unavailable).
     """
     for attempt in range(max_attempts):
         try:
             return fn(*args, **kwargs)
         except gspread.exceptions.APIError as e:
-            if "429" in str(e) and attempt < max_attempts - 1:
-                print(f"  [Sheets] Rate limit hit — esperando {wait_seconds}s antes de reintentar ({attempt + 2}/{max_attempts})...")
+            err = str(e)
+            is_retryable = "429" in err or "503" in err
+            if is_retryable and attempt < max_attempts - 1:
+                code = "429" if "429" in err else "503"
+                print(f"  [Sheets] {code} — esperando {wait_seconds}s antes de reintentar ({attempt + 2}/{max_attempts})...")
                 time.sleep(wait_seconds)
             else:
                 raise
@@ -311,7 +311,7 @@ def get_outstanding_invoices(spreadsheet_id: str, creds_json: str) -> list[dict]
     Each entry: {buyer, month, revenue, invoice_number, invoice_date, due_date, days_outstanding}
     """
     ws = _open_sheet(spreadsheet_id, creds_json)
-    all_values = ws.get_all_values()
+    all_values = _with_retry(ws.get_all_values)
     today = datetime.utcnow().date()
     outstanding = []
 
