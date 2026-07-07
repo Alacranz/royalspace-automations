@@ -7,6 +7,7 @@ spend_guard y ringba_monitor.
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -97,9 +98,26 @@ def _post_calllogs(
         "size":        size,
         "offset":      offset,
     }
-    resp = requests.post(url, headers=headers, json=body, timeout=60)
-    resp.raise_for_status()
-    return resp.json()
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(url, headers=headers, json=body, timeout=60)
+            if resp.status_code in (502, 503, 504) and attempt < 2:
+                wait = 30 * (attempt + 1)  # 30s, 60s
+                print(f"  [Ringba] {resp.status_code} — reintentando en {wait}s ({attempt + 2}/3)...")
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_exc = e
+            if attempt < 2:
+                wait = 30 * (attempt + 1)
+                print(f"  [Ringba] {type(e).__name__} — reintentando en {wait}s ({attempt + 2}/3)...")
+                time.sleep(wait)
+            else:
+                raise
+    raise last_exc or RuntimeError("Ringba API: reintentos agotados")
 
 
 # ── Funciones principales ─────────────────────────────────────────────────────
