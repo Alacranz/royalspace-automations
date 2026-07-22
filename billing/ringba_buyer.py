@@ -39,6 +39,26 @@ def get_month_utc_range(year: int, month: int, tz_name: str = "America/Caracas")
     )
 
 
+def get_half_month_utc_range(year: int, month: int, half: int, tz_name: str = "America/Caracas") -> tuple[datetime, datetime]:
+    """
+    Returns (start_utc, end_utc) for either half of a month.
+    half=1 → days 1–15, half=2 → days 16–end of month.
+    """
+    import calendar as _cal
+    tz       = pytz.timezone(tz_name)
+    last_day = _cal.monthrange(year, month)[1]
+    if half == 1:
+        start_local = tz.localize(datetime(year, month, 1,  0,  0,  0))
+        end_local   = tz.localize(datetime(year, month, 15, 23, 59, 59))
+    else:
+        start_local = tz.localize(datetime(year, month, 16,       0,  0,  0))
+        end_local   = tz.localize(datetime(year, month, last_day, 23, 59, 59))
+    return (
+        start_local.astimezone(timezone.utc).replace(tzinfo=timezone.utc),
+        end_local.astimezone(timezone.utc).replace(tzinfo=timezone.utc),
+    )
+
+
 def get_current_month_utc_range(tz_name: str = "America/Caracas") -> tuple[datetime, datetime]:
     """Returns (start_utc, now_utc) for the current month so far."""
     tz = pytz.timezone(tz_name)

@@ -33,7 +33,7 @@
       "zoho_contact_name": "Aragon Advertising",
       "zoho_item_name": "Dental",
       "discord_name": "Aragon Advertising",
-      "billing_frequency": 2,
+      "billing_frequency": "semi_monthly",
       "due_days": 15,
       "send_invoice": false,
       "active": true

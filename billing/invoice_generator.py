@@ -18,6 +18,7 @@ Required env vars:
 """
 from __future__ import annotations
 
+import calendar
 import json
 import os
 import sys
@@ -37,7 +38,7 @@ from common.discord_client import send as discord_send  # noqa: E402
 from billing.zoho_client import (                        # noqa: E402
     get_access_token, get_contact_id, get_contact_emails, create_invoice, send_invoice
 )
-from billing.ringba_buyer import get_buyer_revenue, get_month_utc_range, find_buyer_data  # noqa: E402
+from billing.ringba_buyer import get_buyer_revenue, get_month_utc_range, get_half_month_utc_range, find_buyer_data  # noqa: E402
 from billing.payment_tracker import (                                # noqa: E402
     log_invoice, refresh_statuses,
     get_pending_state, set_pending_state, clear_pending_state,
@@ -97,6 +98,135 @@ def label_range_en(from_ym: str, to_ym: str) -> str:
     if fy == ty:
         return f"{MONTHS_EN[fm]}–{MONTHS_EN[tm]} {fy}"
     return f"{MONTHS_EN[fm]} {fy} – {MONTHS_EN[tm]} {ty}"
+
+
+def _process_semi_monthly_buyer(
+    *,
+    buyer: dict,
+    year: int,
+    month: int,
+    tz_name: str,
+    today: date,
+    invoice_date: str,
+    threshold: float,
+    ringba_token: str,
+    ringba_acct: str,
+    zoho_token: str,
+    org_id: str,
+    dry_run: bool,
+    gsheets_creds: str,
+    spreadsheet_id: str,
+    crm_token,
+    results: list[dict],
+) -> None:
+    """Genera dos facturas Zoho para un buyer semi-mensual: días 1-15 y 16-fin."""
+    display       = buyer["discord_name"]
+    ringba_sub_id = buyer["ringba_buyer_sub_id"]
+    zoho_name     = buyer["zoho_contact_name"]
+    item_name     = buyer.get("zoho_item_name", "Dental")
+    do_send       = buyer.get("send_invoice", True)
+    due_days      = buyer.get("due_days", 15)
+
+    last_day = calendar.monthrange(year, month)[1]
+    due_date_str = (today + timedelta(days=due_days)).strftime("%Y-%m-%d")
+
+    try:
+        contact_id     = get_contact_id(zoho_token, org_id, zoho_name)
+        contact_emails = get_contact_emails(zoho_token, org_id, contact_id)
+        print(f"  [Zoho] Contact ID: {contact_id} | Emails: {len(contact_emails)} address(es)")
+    except Exception as e:
+        print(f"  [ERROR] Zoho contact: {e}")
+        for tag in [f"1-15", f"16-{last_day}"]:
+            results.append({"buyer": f"{display} ({tag})", "status": f"ERROR: {e}", "revenue": 0.0, "invoice": ""})
+        return
+
+    halves = [
+        (1,  1,        15,       f"{MONTHS_EN[month]} 1-15 {year}",           f"{MONTHS_ES[month]} 1-15 {year}"),
+        (2,  16,       last_day, f"{MONTHS_EN[month]} 16-{last_day} {year}",  f"{MONTHS_ES[month]} 16-{last_day} {year}"),
+    ]
+
+    for half_num, d_start, d_end, label_en, label_es in halves:
+        tag = f"{d_start}-{d_end}"
+        print(f"\n  [{display}] Período {half_num}/2: {label_en}")
+
+        h_start, h_end = get_half_month_utc_range(year, month, half_num, tz_name)
+        half_map   = get_buyer_revenue(ringba_token, ringba_acct, h_start, h_end, verbose=True)
+        buyer_data = find_buyer_data(half_map, ringba_sub_id)
+        revenue    = buyer_data["revenue"] if buyer_data else 0.0
+        print(f"  Revenue: ${revenue:,.2f}")
+
+        if revenue <= 0:
+            print(f"  [Skip] Revenue $0 — no invoice")
+            results.append({"buyer": f"{display} ({tag})", "status": "REVENUE $0", "revenue": 0.0, "invoice": ""})
+            continue
+
+        if threshold > 0 and revenue < threshold:
+            print(f"  [Skip] ${revenue:,.2f} below threshold ${threshold:,.0f}")
+            results.append({"buyer": f"{display} ({tag})", "status": f"BAJO UMBRAL ${revenue:,.2f}", "revenue": revenue, "invoice": ""})
+            continue
+
+        try:
+            invoice = create_invoice(
+                token=zoho_token,
+                org_id=org_id,
+                contact_id=contact_id,
+                invoice_date=invoice_date,
+                due_date=due_date_str,
+                line_items=[{
+                    "name":        item_name,
+                    "description": f"Dental calls — {label_en}",
+                    "quantity":    1,
+                    "rate":        round(revenue, 2),
+                }],
+                reference_number=f"Royalspace — {label_en}",
+            )
+            inv_number = invoice.get("invoice_number", "INV-??????")
+            inv_id     = invoice.get("invoice_id", "")
+            print(f"  [Zoho] Invoice created: {inv_number}")
+
+            if dry_run:
+                print(f"  [DRY RUN] Skipping email send for {inv_number}")
+            elif not do_send:
+                print(f"  [Info] send_invoice=false — draft only")
+            else:
+                send_invoice(zoho_token, org_id, inv_id, contact_emails)
+                print(f"  [Zoho] Sent to {len(contact_emails)} recipient(s)")
+
+            log_invoice(
+                spreadsheet_id=spreadsheet_id,
+                creds_json=gsheets_creds,
+                buyer_name=display,
+                billed_month=label_es,
+                revenue=revenue,
+                invoice_number=inv_number,
+                invoice_date=invoice_date,
+                due_date=due_date_str,
+            )
+
+            if crm_token:
+                try:
+                    acct_id = upsert_contact(crm_token, display, buyer.get("category", ""))
+                    log_invoice_deal(
+                        token=crm_token,
+                        account_id=acct_id,
+                        invoice_number=inv_number,
+                        buyer_name=display,
+                        billed_month=label_es,
+                        revenue=revenue,
+                        due_date=due_date_str,
+                    )
+                except Exception as e:
+                    print(f"  [CRM] Error: {e}")
+
+            results.append({"buyer": f"{display} ({tag})", "status": "OK", "revenue": revenue, "invoice": inv_number})
+
+        except requests.HTTPError as e:
+            msg = f"HTTP {e.response.status_code}"
+            print(f"  [ERROR] {msg}")
+            results.append({"buyer": f"{display} ({tag})", "status": f"ERROR: {msg}", "revenue": revenue, "invoice": ""})
+        except Exception as e:
+            print(f"  [ERROR] {e}")
+            results.append({"buyer": f"{display} ({tag})", "status": f"ERROR: {e}", "revenue": revenue, "invoice": ""})
 
 
 def run() -> None:
@@ -162,6 +292,18 @@ def run() -> None:
         frequency     = buyer.get("billing_frequency", 1)  # 1=monthly, 2=bimonthly
 
         print(f"\n[{display}] Processing (freq={frequency}, due={due_days}d)...")
+
+        # ── Semi-monthly buyers: 2 facturas por mes (1-15 y 16-fin) ───────────
+        if frequency == "semi_monthly":
+            _process_semi_monthly_buyer(
+                buyer=buyer, year=year, month=month, tz_name=tz_name,
+                today=today, invoice_date=invoice_date, threshold=threshold,
+                ringba_token=ringba_token, ringba_acct=ringba_acct,
+                zoho_token=zoho_token, org_id=org_id, dry_run=dry_run,
+                gsheets_creds=gsheets_creds, spreadsheet_id=spreadsheet_id,
+                crm_token=crm_token, results=results,
+            )
+            continue
 
         # ── Load pending state from Google Sheets ──────────────────────────────
         state = get_pending_state(spreadsheet_id, gsheets_creds, display)
