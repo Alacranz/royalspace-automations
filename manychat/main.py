@@ -269,8 +269,10 @@ HUMAN_AGENT_PHRASES = [
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
-HAIKU_INPUT_COST  = 0.80 / 1_000_000   # $ per token
-HAIKU_OUTPUT_COST = 4.00 / 1_000_000   # $ per token
+HAIKU_INPUT_COST       = 0.80 / 1_000_000   # $ per token (uncached)
+HAIKU_CACHE_WRITE_COST = 1.00 / 1_000_000   # $ per token (cache creation, 1.25×)
+HAIKU_CACHE_READ_COST  = 0.08 / 1_000_000   # $ per token (cache hit, 0.1×)
+HAIKU_OUTPUT_COST      = 4.00 / 1_000_000   # $ per token
 
 
 def init_db() -> None:
@@ -291,13 +293,21 @@ def init_db() -> None:
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS token_log (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                input_tokens  INTEGER NOT NULL,
-                output_tokens INTEGER NOT NULL,
-                cost_usd      REAL    NOT NULL,
-                created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                input_tokens        INTEGER NOT NULL,
+                output_tokens       INTEGER NOT NULL,
+                cache_write_tokens  INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
+                cost_usd            REAL    NOT NULL,
+                created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        for _col in ("cache_write_tokens INTEGER NOT NULL DEFAULT 0",
+                     "cache_read_tokens INTEGER NOT NULL DEFAULT 0"):
+            try:
+                conn.execute(f"ALTER TABLE token_log ADD COLUMN {_col}")
+            except sqlite3.OperationalError:
+                pass  # column already exists
         # Idioma persistido por suscriptor — evita cambios de idioma entre mensajes
         conn.execute("""
             CREATE TABLE IF NOT EXISTS subscriber_language (
@@ -340,12 +350,19 @@ def set_subscriber_language(subscriber_id: str, language: str) -> None:
         )
 
 
-def log_tokens(input_tokens: int, output_tokens: int) -> None:
-    cost = input_tokens * HAIKU_INPUT_COST + output_tokens * HAIKU_OUTPUT_COST
+def log_tokens(input_tokens: int, output_tokens: int,
+               cache_write_tokens: int = 0, cache_read_tokens: int = 0) -> None:
+    cost = (
+        input_tokens       * HAIKU_INPUT_COST
+        + cache_write_tokens * HAIKU_CACHE_WRITE_COST
+        + cache_read_tokens  * HAIKU_CACHE_READ_COST
+        + output_tokens      * HAIKU_OUTPUT_COST
+    )
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO token_log (input_tokens, output_tokens, cost_usd) VALUES (?,?,?)",
-            (input_tokens, output_tokens, cost),
+            "INSERT INTO token_log (input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost_usd)"
+            " VALUES (?,?,?,?,?)",
+            (input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost),
         )
 
 
@@ -757,7 +774,12 @@ async def chat(req: ChatRequest) -> JSONResponse:
             messages=messages,
         )
         reply = result.content[0].text.strip()
-        log_tokens(result.usage.input_tokens, result.usage.output_tokens)
+        log_tokens(
+            result.usage.input_tokens,
+            result.usage.output_tokens,
+            cache_write_tokens=getattr(result.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_tokens=getattr(result.usage, "cache_read_input_tokens", 0) or 0,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Claude error: {type(e).__name__}")
 
@@ -797,19 +819,21 @@ async def stats(date: str = "") -> JSONResponse:
         convs_month  = q("SELECT COUNT(DISTINCT subscriber_id) FROM messages WHERE role='user' AND created_at LIKE ?", f"{month}%")
         cost_today   = q("SELECT COALESCE(SUM(cost_usd),0) FROM token_log WHERE created_at LIKE ?", f"{today}%")
         cost_month   = q("SELECT COALESCE(SUM(cost_usd),0) FROM token_log WHERE created_at LIKE ?", f"{month}%")
-        tok_in_month = q("SELECT COALESCE(SUM(input_tokens),0) FROM token_log WHERE created_at LIKE ?", f"{month}%")
-        tok_out_month= q("SELECT COALESCE(SUM(output_tokens),0) FROM token_log WHERE created_at LIKE ?", f"{month}%")
+        tok_in_month    = q("SELECT COALESCE(SUM(input_tokens),0) FROM token_log WHERE created_at LIKE ?", f"{month}%")
+        tok_out_month   = q("SELECT COALESCE(SUM(output_tokens),0) FROM token_log WHERE created_at LIKE ?", f"{month}%")
+        cache_read_month= q("SELECT COALESCE(SUM(cache_read_tokens),0) FROM token_log WHERE created_at LIKE ?", f"{month}%")
 
     return JSONResponse({
         "date": today,
-        "messages_today":       msgs_today,
-        "messages_month":       msgs_month,
-        "conversations_today":  convs_today,
-        "conversations_month":  convs_month,
-        "cost_today_usd":       round(cost_today, 4),
-        "cost_month_usd":       round(cost_month, 4),
-        "tokens_in_month":      tok_in_month,
-        "tokens_out_month":     tok_out_month,
+        "messages_today":           msgs_today,
+        "messages_month":           msgs_month,
+        "conversations_today":      convs_today,
+        "conversations_month":      convs_month,
+        "cost_today_usd":           round(cost_today, 4),
+        "cost_month_usd":           round(cost_month, 4),
+        "tokens_in_month":          tok_in_month,
+        "tokens_out_month":         tok_out_month,
+        "cache_read_tokens_month":  cache_read_month,
     })
 
 
