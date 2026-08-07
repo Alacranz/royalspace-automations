@@ -52,6 +52,8 @@ _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 META_PIXEL_ID          = os.environ.get("META_PIXEL_ID", "")
 META_CONVERSIONS_TOKEN = os.environ.get("META_CONVERSIONS_TOKEN", "")
 RINGBA_WEBHOOK_SECRET  = os.environ.get("RINGBA_WEBHOOK_SECRET", "")
+MANYCHAT_WEBHOOK_SECRET = os.environ.get("MANYCHAT_WEBHOOK_SECRET", "")
+STATS_API_KEY           = os.environ.get("STATS_API_KEY", "")
 
 SYSTEM_PROMPT = """LANGUAGE RULE — ABSOLUTE PRIORITY (overrides everything else):
 - Read the user's CURRENT message AND the full conversation history to determine their language.
@@ -431,6 +433,15 @@ def save_message(subscriber_id: str, role: str, content: str) -> None:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _sanitize_name(name: str) -> str:
+    """Limita longitud y elimina patrones de prompt injection en first_name."""
+    name = name.strip()[:60]
+    name = re.sub(r"[<>{}\[\]\\]", "", name)
+    name = re.sub(r"(ignore|system|prompt|instruction|override|forget|assistant|human)\b",
+                  "", name, flags=re.IGNORECASE)
+    return name.strip()
+
+
 def normalize_text(text: str) -> str:
     nfkd = unicodedata.normalize("NFKD", text)
     return "".join(c for c in nfkd if not unicodedata.combining(c)).lower()
@@ -575,7 +586,11 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/chat")
-async def chat(req: ChatRequest) -> JSONResponse:
+async def chat(req: ChatRequest, request: Request) -> JSONResponse:
+    if MANYCHAT_WEBHOOK_SECRET:
+        if request.headers.get("X-Webhook-Secret", "") != MANYCHAT_WEBHOOK_SECRET:
+            raise HTTPException(status_code=401, detail="unauthorized")
+
     text = req.last_input_text.strip()
 
     if not text:
@@ -636,7 +651,9 @@ async def chat(req: ChatRequest) -> JSONResponse:
     context_parts: list[str] = []
 
     if req.first_name:
-        context_parts.append(f"The user's name is {req.first_name}.")
+        safe_name = _sanitize_name(req.first_name)
+        if safe_name:
+            context_parts.append(f"The user's name is {safe_name}.")
 
     if detected_zip:
         location = resolve_zip(detected_zip)
@@ -805,7 +822,11 @@ async def billing_ping() -> dict:
 
 
 @app.get("/stats")
-async def stats(date: str = "") -> JSONResponse:
+async def stats(request: Request, date: str = "") -> JSONResponse:
+    if STATS_API_KEY:
+        key = request.headers.get("X-Api-Key", "") or request.query_params.get("key", "")
+        if key != STATS_API_KEY:
+            raise HTTPException(status_code=401, detail="unauthorized")
     now   = datetime.now(timezone.utc)
     today = date if date else now.strftime("%Y-%m-%d")
     month = today[:7]  # YYYY-MM
@@ -933,7 +954,11 @@ async def ringba_webhook(request: Request) -> JSONResponse:
 
 
 @app.get("/ringba/stats")
-async def ringba_stats() -> JSONResponse:
+async def ringba_stats(request: Request) -> JSONResponse:
+    if STATS_API_KEY:
+        key = request.headers.get("X-Api-Key", "") or request.query_params.get("key", "")
+        if key != STATS_API_KEY:
+            raise HTTPException(status_code=401, detail="unauthorized")
     now      = datetime.now(timezone.utc)
     today    = now.strftime("%Y-%m-%d")
     week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")

@@ -49,6 +49,7 @@ SPREADSHEET_ID   = os.environ["BILLING_SPREADSHEET_ID"]
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
 WEBHOOK_MOD      = os.environ["DISCORD_WEBHOOK_MOD"]
 WEBHOOK_STATS    = os.environ.get("WEBHOOK_STATS_URL", "")
+STATS_API_KEY    = os.environ.get("STATS_API_KEY", "")
 
 PROFIT_CONFIG  = os.path.join(_ROOT, "profit",  "config.json")
 BILLING_CONFIG = os.path.join(_ROOT, "billing", "config.json")
@@ -95,7 +96,8 @@ def _get_manychat_stats() -> dict:
     if not WEBHOOK_STATS:
         return {}
     try:
-        r = requests.get(WEBHOOK_STATS, timeout=15)
+        headers = {"X-Api-Key": STATS_API_KEY} if STATS_API_KEY else {}
+        r = requests.get(WEBHOOK_STATS, headers=headers, timeout=15)
         r.raise_for_status()
         return r.json()
     except Exception as e:
