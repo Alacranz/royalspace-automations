@@ -79,8 +79,8 @@ POINTS = {
 
 COUNT_WEEKENDS = False
 
-# Empleados que trabajan también los sábados (preferredName en minúsculas)
-SATURDAY_WORKERS = {"clara"}
+# Nadie trabaja sábados desde 2026-08-01
+SATURDAY_WORKERS: set[str] = set()
 
 EXCLUDE_NAMES = {"edwar", "angela vanesa", "sebastian reyes", "angelica flores"}
 

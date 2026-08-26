@@ -91,20 +91,19 @@ def main() -> None:
     print("Token OK")
 
     is_saturday = now_caracas.weekday() == 5
-    saturday_workers = {"clara"}
+
+    # Nadie trabaja sábados desde 2026-08-01
+    if is_saturday:
+        print("Sábado — no hay reporte de asistencia.")
+        return
 
     all_people = [
         p for p in get_people(token, ORG_ID)
         if p.get("status") == "Joined"
         and (p.get("preferredName") or "").strip().lower() not in EXCLUDE_NAMES
     ]
-    # Sábados: solo quienes trabajan ese día (substring match)
-    people = [
-        p for p in all_people
-        if not is_saturday
-        or any(kw in (p.get("preferredName") or "").strip().lower() for kw in saturday_workers)
-    ]
-    print(f"Personas activas: {len(people)}{' (sábado — solo Clara)' if is_saturday else ''}")
+    people = all_people
+    print(f"Personas activas: {len(people)}")
 
     # personId → primera marca "In" del día (datetime VET)
     first_in: dict[str, datetime] = {}
