@@ -2,7 +2,7 @@ name: Asistencia Diaria
 
 # Venezuela Standard Time = UTC-4 (sin DST)
 # 10:30 AM VET = 14:30 UTC
-# Se ejecuta de lunes a sábado (sábados solo reporta a Clara)
+# Se ejecuta L-S; sábados el script sale sin reportar (nadie trabaja sábados desde 2026-08-01)
 
 on:
   schedule:
