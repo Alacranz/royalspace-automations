@@ -12,9 +12,9 @@ Anti-spam: estado persistido en JSON entre runs via GitHub Actions cache.
 
 Routing de webhooks:
   MBs internos (Esteban, Clara, Douglas, Kevin, Luis, Edixon)
-    → DISCORD_WEBHOOK_MB_INTERNAL
+    → DISCORD_WEBHOOK_ALERTS_INTERNAL
   MBs externos (Caribay, Sebastian)
-    → DISCORD_WEBHOOK_MB_EXTERNAL
+    → DISCORD_WEBHOOK_ALERTS_EXTERNAL
   Publishers propios de RS (You, Angela) y Ringba
     → DISCORD_WEBHOOK_MOD
 """
@@ -41,7 +41,7 @@ VET = pytz.timezone("America/Caracas")   # UTC-4, sin DST
 RINGBA_TOKEN     = os.environ["RINGBA_API_TOKEN"]
 RINGBA_ACCOUNT   = os.environ["RINGBA_ACCOUNT_ID"]
 META_TOKEN       = os.environ["META_ACCESS_TOKEN"]
-META_VERSION     = os.environ.get("META_API_VERSION", "v25.0")
+META_VERSION     = os.environ.get("META_API_VERSION") or "v25.0"
 WEBHOOK_MOD      = os.environ["DISCORD_WEBHOOK_MOD"]
 WEBHOOK_INTERNAL = os.environ["DISCORD_WEBHOOK_ALERTS_INTERNAL"]
 WEBHOOK_EXTERNAL = os.environ["DISCORD_WEBHOOK_ALERTS_EXTERNAL"]

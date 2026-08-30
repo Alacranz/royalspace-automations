@@ -1,6 +1,6 @@
 name: Profit — MB Daily Summary
 
-# Corre cada mañana de lunes a domingo a las 7:55 AM EST (12:55 UTC).
+# Corre cada mañana de lunes a domingo a las 7:00 AM VET (11:00 UTC).
 # El domingo muestra el resumen del sábado anterior.
 # Muestra el resumen COMPLETO del día anterior con fecha.
 # No tiene verificación de horario laboral — corre incondicionalmente.
