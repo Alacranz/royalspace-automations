@@ -13,7 +13,7 @@
       "discord_name": "Rex Direct",
       "billing_frequency": 1,
       "due_days": 15,
-      "send_invoice": true,
+      "send_invoice": false,
       "active": true
     },
     {
@@ -24,7 +24,7 @@
       "discord_name": "Ray Advertising",
       "billing_frequency": 1,
       "due_days": 15,
-      "send_invoice": true,
+      "send_invoice": false,
       "active": true
     },
     {

@@ -124,7 +124,7 @@ def _process_semi_monthly_buyer(
     ringba_sub_id = buyer["ringba_buyer_sub_id"]
     zoho_name     = buyer["zoho_contact_name"]
     item_name     = buyer.get("zoho_item_name", "Dental")
-    do_send       = buyer.get("send_invoice", True)
+    do_send       = buyer.get("send_invoice", False)
     due_days      = buyer.get("due_days", 15)
 
     last_day = calendar.monthrange(year, month)[1]
@@ -287,7 +287,7 @@ def run() -> None:
         zoho_name     = buyer["zoho_contact_name"]
         item_name     = buyer.get("zoho_item_name", "Dental")
         display       = buyer["discord_name"]
-        do_send       = buyer.get("send_invoice", True)
+        do_send       = buyer.get("send_invoice", False)
         due_days      = buyer.get("due_days", config.get("invoice_due_days", 15))
         frequency     = buyer.get("billing_frequency", 1)  # 1=monthly, 2=bimonthly
 
