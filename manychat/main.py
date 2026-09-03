@@ -93,7 +93,8 @@ BEHAVIOR RULES:
 - AFTER REDIRECTING TO CALL: Once you have sent the user to call (told them to use the button, press 1, etc.), do NOT follow up with another question or message. The conversation goal is complete — they have what they need. Do not ask "¿Hay algo más?" or any follow-up after redirecting to call.
 - Always end encouraging them to call us.
 - The contact number will be provided in the next step — your role is only to motivate them to call.
-- MANDATORY CALL INSTRUCTION — NO EXCEPTIONS: Every single message that ends with a call to action MUST include this exact phrase (or very close equivalent) before or after the number: "Si al llamar escuchas un mensaje en inglés, presiona 1 para continuar." In English: "If you hear a message in English when you call, press 1 to continue." You MUST include this EVERY TIME, without exception. Never skip it. If you forget this, callers hang up thinking they dialed the wrong number.
+- MANDATORY CALL INSTRUCTION — SPANISH RESPONSES ONLY: The phone line answers in English by default. When responding in SPANISH, every single message that ends with a call to action MUST include this exact phrase (or very close equivalent) before or after the number: "Si al llamar escuchas un mensaje en inglés, presiona 1 para continuar." You MUST include this EVERY TIME you respond in Spanish with a call to action. Never skip it — if you forget this, Spanish-speaking callers hang up thinking they dialed the wrong number.
+- ENGLISH RESPONSES — DO NOT mention pressing 1 or any button/menu instruction. English speakers will hear the line in English by default with no extra step needed — just invite them to call and, if relevant, mention entering their zip code when prompted. Never tell an English speaker to "press 1 for Spanish" or any variation — it makes no sense to them and confuses the call flow.
 - If the person has already been attended or no longer needs help, thank them warmly and say goodbye.
 
 IMAGES / ATTACHMENTS:
@@ -109,7 +110,10 @@ PHONE NUMBERS — ABSOLUTE RULES (never break any of these):
 - NEVER say "te llamaremos", "te llamamos", "alguien te llamará", "we will call you", "nuestro equipo te contactará", or any variation implying an outbound call. We only receive calls.
 
 WHEN USER SAYS NOBODY ANSWERED / CAN'T REACH US:
-- If the user says nobody answered, the line was busy, or they couldn't get through: empathize and encourage them to try again. Example: "Entiendo, a veces hay espera. Intenta de nuevo en unos minutos — cuando llames, si escuchas un mensaje en inglés presiona 1 para continuar en español y alguien te atenderá." NEVER offer to call them back or ask for their number.
+- If the user says nobody answered, the line was busy, or they couldn't get through: empathize and encourage them to try again.
+  Example (ES): "Entiendo, a veces hay espera. Intenta de nuevo en unos minutos — cuando llames, si escuchas un mensaje en inglés presiona 1 para continuar en español y alguien te atenderá."
+  Example (EN): "I understand, sometimes there's a short wait. Please try again in a few minutes and someone will be able to help you."
+  NEVER offer to call them back or ask for their number. NEVER mention pressing 1 in an English response.
 
 URGENCY SIGNALS — when detected, respond with more energy and urgency to call NOW:
 - DENTAL EMERGENCY / PAIN: If the user mentions tooth pain, toothache, broken tooth, abscess, infection, swelling, bleeding, can't sleep from pain → respond with empathy and strong urgency: this needs attention NOW, call us immediately, don't wait.
@@ -254,9 +258,10 @@ OPT_OUT_PHRASES = [
     "que se jodan", "jodan",
 ]
 
-ZIP_REGEX        = re.compile(r'\b\d{5}\b')
-IMAGE_URL_REGEX  = re.compile(r'https?://\S+\.(jpg|jpeg|png|gif|webp|bmp|tiff|heic)(\?\S*)?', re.IGNORECASE)
-ATTACHMENT_REGEX = re.compile(r'(messenger\.com|fbcdn|facebook\.com|cloudfront\.net|cdn\.)', re.IGNORECASE)
+ZIP_REGEX          = re.compile(r'\b\d{5}\b')
+IMAGE_URL_REGEX    = re.compile(r'https?://\S+\.(jpg|jpeg|png|gif|webp|bmp|tiff|heic)(\?\S*)?', re.IGNORECASE)
+ATTACHMENT_REGEX   = re.compile(r'(messenger\.com|fbcdn|facebook\.com|cloudfront\.net|cdn\.)', re.IGNORECASE)
+MANYCHAT_VAR_REGEX = re.compile(r'\{\{[^}]+\}\}')  # placeholders ManyChat sin resolver, ej: {{last_input_text}}
 
 HUMAN_AGENT_PHRASES = [
     "comuniqueme con alguien real", "comuniqueme con una persona",
@@ -592,7 +597,9 @@ async def chat(req: ChatRequest, request: Request) -> JSONResponse:
         if request.headers.get("X-Webhook-Secret", "") != MANYCHAT_WEBHOOK_SECRET:
             raise HTTPException(status_code=401, detail="unauthorized")
 
-    text = req.last_input_text.strip()
+    # Puede llegar como placeholder sin resolver ({{last_input_text}}) cuando el
+    # trigger de ManyChat no tiene un mensaje real asociado (ej: evento de llamada).
+    text = MANYCHAT_VAR_REGEX.sub("", req.last_input_text).strip()
 
     if not text:
         return JSONResponse({"response": "", "action": "skip", "detected_zip": ""})
@@ -605,9 +612,8 @@ async def chat(req: ChatRequest, request: Request) -> JSONResponse:
     # ── Historial y contexto ──────────────────────────────────────────────────
     history_full = get_history(req.subscriber_id)
     # Sanitizar historial: eliminar placeholders ManyChat sin resolver ({{cuf_XXXXX}})
-    _MANYCHAT_VAR = re.compile(r'\{\{[^}]+\}\}')
     history_for_claude = [
-        {"role": h["role"], "content": _MANYCHAT_VAR.sub("", h["content"]).strip()}
+        {"role": h["role"], "content": MANYCHAT_VAR_REGEX.sub("", h["content"]).strip()}
         for h in history_full
     ]
 
