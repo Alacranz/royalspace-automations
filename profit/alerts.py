@@ -31,7 +31,7 @@ import pytz
 
 sys.path.insert(0, os.path.dirname(__file__))
 from common.discord_client import send as discord_send
-from common.meta_client    import get_adset_insights
+from common.meta_client    import get_adset_insights, get_group_ad_account_ids
 from common.ringba_client  import get_publisher_summary, normalize_name
 
 # ── Timezone ──────────────────────────────────────────────────────────────────
@@ -269,15 +269,15 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
         if ad_id:
             account_map[ad_id] = mb
 
-    # Grupos privados → #mod
+    # Grupos privados → #mod (un grupo puede tener varias cuentas de Meta)
     for group in config.get("accounts_private_groups") or []:
-        ad_id = str(group.get("facebook_ad_account_id") or "")
-        if ad_id:
-            account_map[ad_id] = {
-                "display_name": group.get("group_name", "Royalspace Private"),
-                "category":     "private",
-                "facebook_ad_account_id": ad_id,
-            }
+        for ad_id in get_group_ad_account_ids(group):
+            if ad_id:
+                account_map[ad_id] = {
+                    "display_name": group.get("group_name", "Royalspace Private"),
+                    "category":     "private",
+                    "facebook_ad_account_id": ad_id,
+                }
 
     meta_state = state.setdefault("meta", {})
 

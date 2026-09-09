@@ -36,7 +36,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
 from common.business_hours import is_business_hours
 from common.discord_client import send as discord_send
-from common.meta_client import build_spend_map
+from common.meta_client import build_spend_map, get_group_ad_account_ids
 from common.ringba_client import get_midnight_utc, get_publisher_summary, normalize_name
 
 # ── Secretos ──────────────────────────────────────────────────────────────────
@@ -142,7 +142,7 @@ def main() -> None:
             ringba.get(normalize_name(str(p)), {}).get("revenue", 0.0)
             for p in (group.get("publishers") or [])
         )
-        g_spend  = spend_map.get(str(group.get("facebook_ad_account_id") or ""), 0.0)
+        g_spend  = sum(spend_map.get(ad_id, 0.0) for ad_id in get_group_ad_account_ids(group))
         g_profit = g_rev - g_spend
         priv_revenue += g_rev
         priv_spend   += g_spend

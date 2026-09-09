@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(_ROOT, "profit"))   # common.*
 sys.path.insert(0, _ROOT)                            # billing.*
 
 from common.discord_client import send as discord_send          # noqa: E402
-from common.meta_client    import build_spend_map               # noqa: E402
+from common.meta_client    import build_spend_map, get_group_ad_account_ids  # noqa: E402
 from common.ringba_client  import (                             # noqa: E402
     get_publisher_summary, get_yesterday_utc_range, normalize_name
 )
@@ -140,7 +140,7 @@ def run() -> None:
             ringba.get(normalize_name(str(p)), {}).get("revenue", 0.0)
             for p in (group.get("publishers") or [])
         )
-        g_spend  = spend_map.get(str(group.get("facebook_ad_account_id") or ""), 0.0)
+        g_spend  = sum(spend_map.get(ad_id, 0.0) for ad_id in get_group_ad_account_ids(group))
         priv_revenue += g_rev
         priv_spend   += g_spend
         priv_profit  += g_rev - g_spend
