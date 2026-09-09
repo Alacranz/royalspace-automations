@@ -9,7 +9,10 @@
         "you",
         "T.I Angela Monroy"
       ],
-      "facebook_ad_account_id": "act_266001198433130",
+      "facebook_ad_account_ids": [
+        "act_266001198433130",
+        "act_1152628826504448"
+      ],
       "active": true
     }
   ],
