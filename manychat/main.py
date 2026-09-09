@@ -348,6 +348,20 @@ def extract_city_state(text: str) -> tuple[str, str] | None:
     return None
 
 
+# Detecta, de forma determinística (no depende del criterio de Claude), cuando
+# el usuario dice que no sabe su código postal — cubre variantes con o sin
+# espacios/typos comunes ("no se", "no lo se", "no melose", "nose", "don't know").
+DONT_KNOW_ZIP_RE = re.compile(
+    r'no\s*(me\s*)?(lo\s*)?s[ée]\b|no\s*lo\s*tengo|no\s*lo\s*conozco|'
+    r'no\s*lo\s*recuerdo|no\s*me\s*acuerdo|ni\s*idea|no\s*idea|'
+    r"don'?t\s*know|not\s*sure|i\s*dont\s*know"
+)
+
+# Frases que indican que el ÚLTIMO mensaje del bot fue pidiendo el zip code —
+# usado para confirmar que un "no sé" del usuario se refiere específicamente
+# al código postal (y no a otra cosa) antes de disparar el flujo de ciudad/estado.
+ZIP_ASK_MARKERS = ["codigo postal", "zip code", "tu zip", "el zip"]
+
 HUMAN_AGENT_PHRASES = [
     "comuniqueme con alguien real", "comuniqueme con una persona",
     "quiero hablar con alguien real", "quiero hablar con una persona real",
@@ -740,6 +754,13 @@ async def chat(req: ChatRequest, request: Request) -> JSONResponse:
     mc_zip = extract_zip(req.zip_code) if req.zip_code else ""
     detected_zip = extract_zip(text) or _zip_in_history(history_full) or mc_zip or ""
 
+    # Última respuesta del bot — usada para forzar variación Y para confirmar
+    # que un "no sé" del usuario se refiere al zip code (ver más abajo).
+    last_assistant_msg = next(
+        (m["content"] for m in reversed(history_for_claude) if m["role"] == "assistant"),
+        None,
+    )
+
     # Si no hay zip pero el usuario dio ciudad/estado (típicamente porque no
     # sabe su código postal), buscar un zip aproximado de esa zona para que
     # tenga algo válido que marcar cuando la IVR se lo pida al llamar.
@@ -768,6 +789,21 @@ async def chat(req: ChatRequest, request: Request) -> JSONResponse:
                     f"our team will follow up shortly with the right code for their area — do NOT "
                     f"invent a zip code, and do NOT redirect them to call right now."
                 )
+        elif (
+            last_assistant_msg
+            and has_keyword(last_assistant_msg, ZIP_ASK_MARKERS)
+            and DONT_KNOW_ZIP_RE.search(normalize_text(text))
+        ):
+            # Detección determinística: nuestro último mensaje pidió el zip Y el
+            # usuario responde con una frase de "no sé" — no depende del criterio
+            # de Claude para reconocer typos/variantes informales.
+            approx_zip_note = (
+                "USER DOESN'T KNOW THEIR ZIP CODE (detected deterministically: our last message "
+                "asked for it, and their reply says they don't know it — even if informally or "
+                "misspelled). Do NOT repeat the zip request, and do NOT tell them to give it when "
+                "calling — that's illogical. Instead, warmly ask for their city and state so we can "
+                "find an approximate code for their area."
+            )
 
     # ── Detectar tipo de mensaje ──────────────────────────────────────────────
     image_sent      = is_image_or_attachment(text)
@@ -791,12 +827,6 @@ async def chat(req: ChatRequest, request: Request) -> JSONResponse:
     else:
         final_lang = "en"
         _lang_source = "default"   # sin señal: Claude decide
-
-    # Última respuesta del bot — para forzar variación explícita
-    last_assistant_msg = next(
-        (m["content"] for m in reversed(history_for_claude) if m["role"] == "assistant"),
-        None,
-    )
 
     # ── Construir contexto para Claude ───────────────────────────────────────
     context_parts: list[str] = []
