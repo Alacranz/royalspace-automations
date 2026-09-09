@@ -87,6 +87,7 @@ BEHAVIOR RULES:
 - READ THE FULL CONVERSATION HISTORY carefully before responding. If the user mentioned something before (a problem, a pain, that they called and no one answered, no coverage in their area), acknowledge it with empathy — never ignore prior context.
 - If this is a returning user (has prior conversation history from a previous session), open by warmly acknowledging you've spoken before.
 - If the user has not given their zip code, ask for it warmly. If they have sent 3 or more messages WITHOUT providing a zip code, be more direct: tell them you really need their zip code to find the closest dentist and help them — make it feel urgent and necessary.
+- IF THE USER SAYS THEY DON'T KNOW THEIR ZIP CODE (e.g., "no lo sé", "no me lo sé", "no lo sé cuál es", "no lo tengo", "don't know", "not sure", "no idea"): do NOT repeat the same zip request, and do NOT tell them to "give it when they call" — that makes no sense if they don't know it. Instead, warmly ask for their city and state so we can find the right area for them. Example (ES): "No hay problema, dime en qué ciudad y estado vives y te ayudamos a encontrar el código correcto." Example (EN): "No problem, just tell me your city and state and we'll help you find the right code."
 - When asked about prices, insurance, payment plans, treatments, location, or any specific detail: briefly acknowledge and redirect them to call us because every office is different and we can give them exact, personalized information.
 - NEVER ask "¿Estás listo para llamar?" or "¿Te gustaría llamar?" or any variation. Never ask permission to call — just send them. If you have their location and/or treatment need, redirect to call immediately without asking if they're ready.
 - ONE QUESTION RULE: Never ask more than one question at a time. If you need info, ask only the single most important thing. Never stack two questions in one message.
@@ -274,6 +275,78 @@ ZIP_REGEX          = re.compile(r'\b\d{5}\b')
 IMAGE_URL_REGEX    = re.compile(r'https?://\S+\.(jpg|jpeg|png|gif|webp|bmp|tiff|heic)(\?\S*)?', re.IGNORECASE)
 ATTACHMENT_REGEX   = re.compile(r'(messenger\.com|fbcdn|facebook\.com|cloudfront\.net|cdn\.)', re.IGNORECASE)
 MANYCHAT_VAR_REGEX = re.compile(r'\{\{[^}]+\}\}')  # placeholders ManyChat sin resolver, ej: {{last_input_text}}
+
+# Estados US: nombre completo (normalizado, sin acentos) → abreviatura.
+# Usado para reconocer ciudad/estado cuando el usuario no sabe su código postal.
+US_STATES = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+    "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID",
+    "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS",
+    "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
+    "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+    "vermont": "VT", "virginia": "VA", "washington": "WA", "west virginia": "WV",
+    "wisconsin": "WI", "wyoming": "WY",
+}
+# Nombres en español que difieren del inglés (Dentista Latino sirve principalmente hispanohablantes)
+US_STATES_ES = {
+    "nueva york": "NY", "nuevo mexico": "NM", "luisiana": "LA",
+    "pensilvania": "PA", "carolina del norte": "NC", "carolina del sur": "SC",
+    "dakota del norte": "ND", "dakota del sur": "SD",
+    "virginia occidental": "WV", "virginia del oeste": "WV",
+}
+_ALL_STATE_NAMES = {**US_STATES, **US_STATES_ES}
+_US_STATE_ABBRS = {abbr.lower() for abbr in US_STATES.values()}
+
+_CITY_FILLER_PREFIXES = [
+    "vivo en", "estoy en", "resido en", "soy de", "quedo en", "me encuentro en",
+    "i live in", "i'm in", "im in", "i am in", "i'm from", "im from", "from",
+]
+
+# Si el "remanente" tras quitar el estado contiene alguna de estas palabras,
+# no es realmente un nombre de ciudad — es texto de otra intención
+# (ej: "necesito info en Nueva York" no es una respuesta de ubicación).
+_NON_CITY_WORDS = {
+    "necesito", "quiero", "quisiera", "informacion", "info", "por", "favor",
+    "dame", "dime", "ayuda", "algo", "alguna", "sobre", "mas", "cuanto", "cuesta",
+    "need", "want", "information", "please", "help", "about", "more", "how", "much",
+}
+
+_CITY_STATE_COMMA_RE = re.compile(r'([a-z\s]{2,30}?),\s*([a-z]{2})\b')
+
+
+def extract_city_state(text: str) -> tuple[str, str] | None:
+    """
+    Intenta extraer (ciudad, abreviatura_estado) de un mensaje en texto libre.
+    Devuelve None si no encuentra una coincidencia razonablemente confiable.
+    """
+    normalized = normalize_text(text)
+
+    # Patrón "Ciudad, ST" — más confiable (coma + abreviatura válida de 2 letras)
+    m = _CITY_STATE_COMMA_RE.search(normalized)
+    if m:
+        city, abbr = m.group(1).strip(), m.group(2).lower()
+        if abbr in _US_STATE_ABBRS and city:
+            return city.title(), abbr.upper()
+
+    # Fallback: nombre completo del estado en cualquier parte del texto
+    for state_name, abbr in _ALL_STATE_NAMES.items():
+        if re.search(rf'\b{re.escape(state_name)}\b', normalized):
+            remainder = normalized.replace(state_name, "").strip(" ,.")
+            for prefix in _CITY_FILLER_PREFIXES:
+                if remainder.startswith(prefix):
+                    remainder = remainder[len(prefix):].strip(" ,.")
+            words = remainder.split()
+            if remainder and 1 <= len(words) <= 3 and not (set(words) & _NON_CITY_WORDS):
+                return remainder.title(), abbr
+
+    return None
+
 
 HUMAN_AGENT_PHRASES = [
     "comuniqueme con alguien real", "comuniqueme con una persona",
@@ -503,9 +576,18 @@ def extract_zip(text: str) -> str | None:
 
 
 def _zip_in_history(history: list[dict]) -> str | None:
-    """Scan user messages in history (most recent first) for a zip code."""
+    """
+    Scan history (most recent first) for a zip code.
+    Checks user messages first; falls back to assistant messages so an
+    approximate zip we suggested (city/state lookup) is remembered too.
+    """
     for msg in reversed(history):
         if msg["role"] == "user":
+            z = extract_zip(msg["content"])
+            if z:
+                return z
+    for msg in reversed(history):
+        if msg["role"] == "assistant":
             z = extract_zip(msg["content"])
             if z:
                 return z
@@ -563,6 +645,27 @@ def resolve_zip(zip_code: str) -> str:
             data = resp.json()
             place = data["places"][0]
             return f"{place['place name']}, {place['state abbreviation']}"
+    except Exception:
+        pass
+    return ""
+
+
+def resolve_city_state_zip(city: str, state_abbr: str) -> str:
+    """
+    Busca un zip aproximado para una ciudad/estado (reverse lookup, mismo API
+    que resolve_zip). Usado cuando el usuario no sabe su código postal pero
+    sí sabe dónde vive. Vacío si no se encuentra.
+    """
+    try:
+        resp = http_requests.get(
+            f"https://api.zippopotam.us/us/{state_abbr.lower()}/{city.strip()}",
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            places = data.get("places", [])
+            if places:
+                return places[0].get("post code", "")
     except Exception:
         pass
     return ""
@@ -637,6 +740,35 @@ async def chat(req: ChatRequest, request: Request) -> JSONResponse:
     mc_zip = extract_zip(req.zip_code) if req.zip_code else ""
     detected_zip = extract_zip(text) or _zip_in_history(history_full) or mc_zip or ""
 
+    # Si no hay zip pero el usuario dio ciudad/estado (típicamente porque no
+    # sabe su código postal), buscar un zip aproximado de esa zona para que
+    # tenga algo válido que marcar cuando la IVR se lo pida al llamar.
+    approx_zip_note = ""
+    needs_handoff   = False
+    if not detected_zip:
+        city_state = extract_city_state(text)
+        if city_state:
+            city, state_abbr = city_state
+            approx_zip = resolve_city_state_zip(city, state_abbr)
+            if approx_zip:
+                detected_zip = approx_zip
+                approx_zip_note = (
+                    f"APPROXIMATE ZIP FOUND: The user doesn't know their exact zip code, but gave "
+                    f"their city/state ({city}, {state_abbr}). We found an approximate zip code for "
+                    f"that area: {approx_zip}. Tell them clearly they can use THIS zip code "
+                    f"({approx_zip}) when the automated call system asks for one — mention it's an "
+                    f"approximate code for their area, not necessarily their exact home zip."
+                )
+            else:
+                needs_handoff = True
+                approx_zip_note = (
+                    f"CITY/STATE GIVEN BUT NO ZIP FOUND: The user gave their city/state "
+                    f"({city}, {state_abbr}) because they don't know their zip code, but we could not "
+                    f"automatically find an approximate zip for that area. Let them know warmly that "
+                    f"our team will follow up shortly with the right code for their area — do NOT "
+                    f"invent a zip code, and do NOT redirect them to call right now."
+                )
+
     # ── Detectar tipo de mensaje ──────────────────────────────────────────────
     image_sent      = is_image_or_attachment(text)
     wants_human     = is_requesting_human(text)
@@ -702,7 +834,9 @@ async def chat(req: ChatRequest, request: Request) -> JSONResponse:
             "is to call us — that's where everything gets resolved. Make calling feel like the natural answer."
         )
 
-    if not detected_zip and user_msg_count >= MSGS_BEFORE_ZIP_INSIST and not _zip_in_history(history_full):
+    if approx_zip_note:
+        context_parts.append(approx_zip_note)
+    elif not detected_zip and user_msg_count >= MSGS_BEFORE_ZIP_INSIST and not _zip_in_history(history_full):
         context_parts.append(
             f"IMPORTANT: The user has sent {user_msg_count} messages WITHOUT providing a zip code. "
             "Be more direct and insistent: you NEED their zip code to find the nearest dentist. "
@@ -823,9 +957,13 @@ async def chat(req: ChatRequest, request: Request) -> JSONResponse:
     save_message(req.subscriber_id, "user", text)
     save_message(req.subscriber_id, "assistant", reply)
 
+    # Si dieron ciudad/estado pero no pudimos resolver un zip aproximado,
+    # pausar automatizaciones para que un media buyer le dé un código válido.
+    action = "pause" if needs_handoff else "respond"
+
     return JSONResponse({
         "response":     reply,
-        "action":       "respond",
+        "action":       action,
         "detected_zip": detected_zip,
     })
 
