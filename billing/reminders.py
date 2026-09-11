@@ -31,6 +31,9 @@ from billing.ringba_buyer import (                        # noqa: E402
 from billing.payment_tracker import get_outstanding_invoices, refresh_statuses  # noqa: E402
 from billing.sync_payments import run as sync_payments                        # noqa: E402
 from billing.zoho_crm import get_crm_token, mark_deal_overdue, update_buyer_revenue  # noqa: E402
+from common.callgrid_client import (                                          # noqa: E402
+    get_buyer_revenue as get_callgrid_buyer_revenue, merge_buyer_maps
+)
 
 EST = pytz.timezone("America/New_York")
 
@@ -55,6 +58,8 @@ def run() -> None:
 
     ringba_token    = os.environ["RINGBA_API_TOKEN"]
     ringba_acct     = os.environ["RINGBA_ACCOUNT_ID"]
+    callgrid_key    = os.environ.get("CALLGRID_API_KEY", "")
+    callgrid_org    = os.environ.get("CALLGRID_ORG_ID", "")
     gsheets_creds   = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
     spreadsheet_id  = os.environ.get("BILLING_SPREADSHEET_ID", "")
     discord_webhook = os.environ["DISCORD_WEBHOOK_BILLING"]
@@ -71,6 +76,17 @@ def run() -> None:
 
     print("\n[Ringba] Fetching buyer revenue...")
     buyer_map = get_buyer_revenue(ringba_token, ringba_acct, start_utc, end_utc, verbose=False)
+
+    if callgrid_key and callgrid_org:
+        try:
+            print("[CallGrid] Fetching buyer revenue...")
+            month_start_date = now_est.replace(day=1).date()
+            callgrid_map = get_callgrid_buyer_revenue(
+                callgrid_key, callgrid_org, month_start_date, now_est.date()
+            )
+            buyer_map = merge_buyer_maps(buyer_map, callgrid_map)
+        except Exception as e:
+            print(f"  [CallGrid] Error (usando solo Ringba): {e}")
 
     # ── Sync pagos desde Zoho Books → Google Sheets ───────────────────────────
     zoho_client_id     = os.environ.get("ZOHO_CLIENT_ID", "")

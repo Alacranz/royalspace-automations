@@ -44,6 +44,9 @@ from billing.payment_tracker import (                                # noqa: E40
     get_pending_state, set_pending_state, clear_pending_state,
 )
 from billing.zoho_crm import get_crm_token, upsert_contact, log_invoice_deal  # noqa: E402
+from common.callgrid_client import (                                 # noqa: E402
+    get_buyer_revenue as get_callgrid_buyer_revenue, merge_buyer_maps
+)
 
 EST = pytz.timezone("America/New_York")
 
@@ -111,6 +114,8 @@ def _process_semi_monthly_buyer(
     threshold: float,
     ringba_token: str,
     ringba_acct: str,
+    callgrid_key: str,
+    callgrid_org: str,
     zoho_token: str,
     org_id: str,
     dry_run: bool,
@@ -151,6 +156,16 @@ def _process_semi_monthly_buyer(
 
         h_start, h_end = get_half_month_utc_range(year, month, half_num, tz_name)
         half_map   = get_buyer_revenue(ringba_token, ringba_acct, h_start, h_end, verbose=True)
+
+        if callgrid_key and callgrid_org:
+            try:
+                callgrid_half = get_callgrid_buyer_revenue(
+                    callgrid_key, callgrid_org, date(year, month, d_start), date(year, month, d_end)
+                )
+                half_map = merge_buyer_maps(half_map, callgrid_half)
+            except Exception as e:
+                print(f"  [CallGrid] Error (usando solo Ringba): {e}")
+
         buyer_data = find_buyer_data(half_map, ringba_sub_id)
         revenue    = buyer_data["revenue"] if buyer_data else 0.0
         print(f"  Revenue: ${revenue:,.2f}")
@@ -239,6 +254,8 @@ def run() -> None:
     # ── Secrets ───────────────────────────────────────────────────────────────
     ringba_token    = os.environ["RINGBA_API_TOKEN"]
     ringba_acct     = os.environ["RINGBA_ACCOUNT_ID"]
+    callgrid_key    = os.environ.get("CALLGRID_API_KEY", "")
+    callgrid_org    = os.environ.get("CALLGRID_ORG_ID", "")
     zoho_client_id  = os.environ["ZOHO_CLIENT_ID"]
     zoho_secret     = os.environ["ZOHO_CLIENT_SECRET"]
     zoho_refresh    = os.environ["ZOHO_REFRESH_TOKEN"]
@@ -264,6 +281,17 @@ def run() -> None:
     # ── Fetch Ringba data for previous month ───────────────────────────────────
     print("\n[Ringba] Fetching buyer revenue...")
     buyer_map = get_buyer_revenue(ringba_token, ringba_acct, start_utc, end_utc, verbose=True)
+
+    if callgrid_key and callgrid_org:
+        try:
+            print("[CallGrid] Fetching buyer revenue...")
+            last_day = calendar.monthrange(year, month)[1]
+            callgrid_map = get_callgrid_buyer_revenue(
+                callgrid_key, callgrid_org, date(year, month, 1), date(year, month, last_day)
+            )
+            buyer_map = merge_buyer_maps(buyer_map, callgrid_map)
+        except Exception as e:
+            print(f"  [CallGrid] Error (usando solo Ringba): {e}")
 
     # ── Zoho access token ──────────────────────────────────────────────────────
     print("\n[Zoho] Getting access token...")
@@ -299,6 +327,7 @@ def run() -> None:
                 buyer=buyer, year=year, month=month, tz_name=tz_name,
                 today=today, invoice_date=invoice_date, threshold=threshold,
                 ringba_token=ringba_token, ringba_acct=ringba_acct,
+                callgrid_key=callgrid_key, callgrid_org=callgrid_org,
                 zoho_token=zoho_token, org_id=org_id, dry_run=dry_run,
                 gsheets_creds=gsheets_creds, spreadsheet_id=spreadsheet_id,
                 crm_token=crm_token, results=results,

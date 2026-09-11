@@ -54,4 +54,6 @@ jobs:
           BILLING_SPREADSHEET_ID:      ${{ secrets.BILLING_SPREADSHEET_ID }}
           DISCORD_WEBHOOK_BILLING:     ${{ secrets.DISCORD_WEBHOOK_BILLING }}
           ZOHO_REFRESH_TOKEN_CRM:      ${{ secrets.ZOHO_REFRESH_TOKEN_CRM }}
+          CALLGRID_API_KEY:            ${{ secrets.CALLGRID_API_KEY }}
+          CALLGRID_ORG_ID:             ${{ secrets.CALLGRID_ORG_ID }}
           DRY_RUN:                     ${{ github.event.inputs.dry_run || 'false' }}
