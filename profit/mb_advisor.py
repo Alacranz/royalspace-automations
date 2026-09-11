@@ -39,8 +39,10 @@ from common.meta_client import build_spend_map, get_adset_insights
 from common.ringba_client import (
     get_midnight_utc,
     get_publisher_summary,
+    get_today_local_date,
     normalize_name,
 )
+from common.callgrid_client import get_publisher_summary as get_callgrid_summary, merge_publisher_maps
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 
@@ -52,6 +54,8 @@ ANTHROPIC_KEY    = os.environ["ANTHROPIC_API_KEY"]
 WEBHOOK_MOD      = os.environ["DISCORD_WEBHOOK_MOD"]
 WEBHOOK_INTERNAL = os.environ["DISCORD_WEBHOOK_MB_INTERNAL"]
 WEBHOOK_EXTERNAL = os.environ["DISCORD_WEBHOOK_MB_EXTERNAL"]
+CALLGRID_API_KEY = os.environ.get("CALLGRID_API_KEY", "")
+CALLGRID_ORG_ID  = os.environ.get("CALLGRID_ORG_ID", "")
 
 # Webhooks individuales por MB (opcional)
 _MB_WEBHOOKS: dict[str, str] = {}
@@ -221,6 +225,25 @@ def main() -> None:
 
     print("Consultando Ringba (7 días)...")
     ringba_week = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, week_start, today_start)
+
+    if CALLGRID_API_KEY and CALLGRID_ORG_ID:
+        today_date      = get_today_local_date(TZ_NAME)
+        week_start_date = today_date - timedelta(days=7)
+        week_end_date   = today_date - timedelta(days=1)
+
+        try:
+            print("Consultando CallGrid (hoy)...")
+            callgrid_today = get_callgrid_summary(CALLGRID_API_KEY, CALLGRID_ORG_ID, today_date, today_date)
+            ringba_today   = merge_publisher_maps(ringba_today, callgrid_today)
+        except Exception as e:
+            print(f"  [CallGrid] Error hoy (usando solo Ringba): {e}")
+
+        try:
+            print("Consultando CallGrid (7 días)...")
+            callgrid_week = get_callgrid_summary(CALLGRID_API_KEY, CALLGRID_ORG_ID, week_start_date, week_end_date)
+            ringba_week   = merge_publisher_maps(ringba_week, callgrid_week)
+        except Exception as e:
+            print(f"  [CallGrid] Error semana (usando solo Ringba): {e}")
 
     print("Consultando Meta spend (hoy)...")
     spend_map = build_spend_map(META_TOKEN, META_VERSION, config, "today", include_private_groups=False)

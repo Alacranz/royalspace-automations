@@ -45,3 +45,5 @@ jobs:
           ANTHROPIC_API_KEY:           ${{ secrets.ANTHROPIC_API_KEY }}
           DISCORD_WEBHOOK_MOD:         ${{ secrets.DISCORD_WEBHOOK_MOD }}
           WEBHOOK_STATS_URL:           ${{ secrets.WEBHOOK_STATS_URL }}
+          CALLGRID_API_KEY:            ${{ secrets.CALLGRID_API_KEY }}
+          CALLGRID_ORG_ID:             ${{ secrets.CALLGRID_ORG_ID }}

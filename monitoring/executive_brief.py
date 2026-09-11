@@ -35,6 +35,9 @@ from common.meta_client    import build_spend_map, get_group_ad_account_ids  # n
 from common.ringba_client  import (                             # noqa: E402
     get_publisher_summary, get_yesterday_utc_range, normalize_name
 )
+from common.callgrid_client import (                            # noqa: E402
+    get_publisher_summary as get_callgrid_summary, merge_publisher_maps
+)
 from billing.payment_tracker import (                            # noqa: E402
     get_outstanding_invoices, get_pending_state,
 )
@@ -50,6 +53,8 @@ ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
 WEBHOOK_MOD      = os.environ["DISCORD_WEBHOOK_MOD"]
 WEBHOOK_STATS    = os.environ.get("WEBHOOK_STATS_URL", "")
 STATS_API_KEY    = os.environ.get("STATS_API_KEY", "")
+CALLGRID_API_KEY = os.environ.get("CALLGRID_API_KEY", "")
+CALLGRID_ORG_ID  = os.environ.get("CALLGRID_ORG_ID", "")
 
 PROFIT_CONFIG  = os.path.join(_ROOT, "profit",  "config.json")
 BILLING_CONFIG = os.path.join(_ROOT, "billing", "config.json")
@@ -131,6 +136,14 @@ def run() -> None:
 
     print("\n[Ringba] Consultando calllogs de ayer...")
     ringba = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
+
+    if CALLGRID_API_KEY and CALLGRID_ORG_ID:
+        try:
+            print("[CallGrid] Consultando calllogs de ayer...")
+            callgrid = get_callgrid_summary(CALLGRID_API_KEY, CALLGRID_ORG_ID, yesterday, yesterday)
+            ringba   = merge_publisher_maps(ringba, callgrid)
+        except Exception as e:
+            print(f"  [CallGrid] Error (usando solo Ringba): {e}")
 
     # ── 2. Profit calculation ──────────────────────────────────────────────────
     # Private groups

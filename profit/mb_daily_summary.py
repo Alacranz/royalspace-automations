@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from common.discord_client import send as discord_send
 from common.meta_client import build_spend_map
 from common.ringba_client import get_publisher_summary, get_yesterday_utc_range, normalize_name
+from common.callgrid_client import get_publisher_summary as get_callgrid_summary, merge_publisher_maps
 
 # ── Secretos ──────────────────────────────────────────────────────────────────
 RINGBA_TOKEN     = os.environ["RINGBA_API_TOKEN"]
@@ -31,6 +32,8 @@ META_TOKEN       = os.environ["META_ACCESS_TOKEN"]
 META_VERSION     = os.environ.get("META_API_VERSION", "v25.0")
 WEBHOOK_INTERNAL = os.environ["DISCORD_WEBHOOK_MB_INTERNAL"]
 WEBHOOK_EXTERNAL = os.environ["DISCORD_WEBHOOK_MB_EXTERNAL"]
+CALLGRID_API_KEY = os.environ.get("CALLGRID_API_KEY", "")
+CALLGRID_ORG_ID  = os.environ.get("CALLGRID_ORG_ID", "")
 
 import sentry_sdk
 sentry_dsn = os.environ.get("SENTRY_DSN")
@@ -100,6 +103,14 @@ def main() -> None:
 
     print("Consultando Ringba (yesterday)...")
     ringba = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
+
+    if CALLGRID_API_KEY and CALLGRID_ORG_ID:
+        try:
+            print("Consultando CallGrid (yesterday)...")
+            callgrid = get_callgrid_summary(CALLGRID_API_KEY, CALLGRID_ORG_ID, yesterday_date, yesterday_date)
+            ringba   = merge_publisher_maps(ringba, callgrid)
+        except Exception as e:
+            print(f"  [CallGrid] Error (usando solo Ringba): {e}")
 
     # ── Calcular por MB ────────────────────────────────────────────────────────
     internal_rows: list[dict] = []
