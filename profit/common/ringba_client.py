@@ -44,6 +44,13 @@ def normalize_name(name: str) -> str:
     return n.strip().lower()
 
 
+def get_today_local_date(timezone_name: str):
+    """Retorna la fecha (date) de HOY en la timezone dada — usado por CallGrid,
+    que recibe fechas simples y hace la conversión de zona horaria internamente."""
+    tz = pytz.timezone(timezone_name)
+    return datetime.now(tz).date()
+
+
 def get_midnight_utc(timezone_name: str) -> datetime:
     """
     Retorna la medianoche de HOY (en la timezone dada) como datetime UTC aware.

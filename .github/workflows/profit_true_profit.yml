@@ -52,5 +52,6 @@ jobs:
           DISCORD_WEBHOOK_MB_INTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_INTERNAL }}
           DISCORD_WEBHOOK_MB_EXTERNAL: ${{ secrets.DISCORD_WEBHOOK_MB_EXTERNAL }}
           CALLGRID_API_KEY:            ${{ secrets.CALLGRID_API_KEY }}
+          CALLGRID_ORG_ID:             ${{ secrets.CALLGRID_ORG_ID }}
           SENTRY_DSN:                  ${{ secrets.SENTRY_DSN }}
           FORCE_RUN:                   ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
