@@ -35,11 +35,14 @@ sys.path.insert(0, os.path.dirname(__file__))
 from common.discord_client import send as discord_send
 from common.meta_client    import get_spend_range
 from common.ringba_client  import get_publisher_summary, normalize_name
+from common.callgrid_client import get_publisher_summary as get_callgrid_summary, merge_publisher_maps
 from common.sheets_client  import get_spreadsheet
 
 # ── Secretos ──────────────────────────────────────────────────────────────────
 RINGBA_TOKEN    = os.environ["RINGBA_API_TOKEN"]
 RINGBA_ACCOUNT  = os.environ["RINGBA_ACCOUNT_ID"]
+CALLGRID_API_KEY = os.environ.get("CALLGRID_API_KEY", "")
+CALLGRID_ORG_ID  = os.environ.get("CALLGRID_ORG_ID", "")
 META_TOKEN      = os.environ["META_ACCESS_TOKEN"]
 META_VERSION    = os.environ.get("META_API_VERSION", "v25.0")
 WEBHOOK_MOD     = os.environ["DISCORD_WEBHOOK_MOD"]
@@ -169,6 +172,19 @@ def fetch_ringba_payouts(start_utc, end_utc) -> dict[str, float]:
     columna Payout del Publisher Summary de Ringba.
     """
     pub_map = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
+
+    if CALLGRID_API_KEY and CALLGRID_ORG_ID:
+        try:
+            start_date = start_utc.astimezone(VET).date()
+            end_date   = end_utc.astimezone(VET).date()
+            callgrid   = get_callgrid_summary(
+                CALLGRID_API_KEY, CALLGRID_ORG_ID, start_date, end_date,
+                report_timezone="America/Caracas",
+            )
+            pub_map = merge_publisher_maps(pub_map, callgrid)
+        except Exception as e:
+            print(f"  [CallGrid] Error (usando solo Ringba): {e}")
+
     result  = {key: data["payout"] for key, data in pub_map.items()}
 
     print(f"  [Ringba] Payout por publisher:")
