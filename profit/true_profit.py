@@ -38,6 +38,7 @@ from common.business_hours import is_business_hours
 from common.discord_client import send as discord_send
 from common.meta_client import build_spend_map, get_group_ad_account_ids
 from common.ringba_client import get_midnight_utc, get_publisher_summary, normalize_name
+from common.callgrid_client import get_publisher_summary as get_callgrid_summary, merge_publisher_maps
 
 # ── Secretos ──────────────────────────────────────────────────────────────────
 RINGBA_TOKEN      = os.environ["RINGBA_API_TOKEN"]
@@ -47,6 +48,7 @@ META_VERSION      = os.environ.get("META_API_VERSION", "v25.0")
 WEBHOOK_MOD       = os.environ["DISCORD_WEBHOOK_MOD"]
 WEBHOOK_INTERNAL  = os.environ["DISCORD_WEBHOOK_MB_INTERNAL"]
 WEBHOOK_EXTERNAL  = os.environ["DISCORD_WEBHOOK_MB_EXTERNAL"]
+CALLGRID_API_KEY  = os.environ.get("CALLGRID_API_KEY", "")
 
 import sentry_sdk
 sentry_dsn = os.environ.get("SENTRY_DSN")
@@ -126,6 +128,18 @@ def main() -> None:
 
     print("Consultando Ringba (today)...")
     ringba = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
+
+    # CallGrid: migración en curso desde Ringba. Mismo nomenclatura de
+    # publishers en ambos sistemas → se suman por publisher normalizado.
+    # Nunca debe tumbar el reporte completo si falla — es un agregado, no
+    # la fuente principal todavía.
+    if CALLGRID_API_KEY:
+        try:
+            print("Consultando CallGrid (today)...")
+            callgrid = get_callgrid_summary(CALLGRID_API_KEY, start_utc, end_utc)
+            ringba   = merge_publisher_maps(ringba, callgrid)
+        except Exception as e:
+            print(f"  [CallGrid] Error (usando solo Ringba): {e}")
 
     # ── Publishers conocidos (para detectar afiliados externos) ───────────────
     known: set[str] = set()
