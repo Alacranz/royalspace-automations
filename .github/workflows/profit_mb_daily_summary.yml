@@ -1,9 +1,15 @@
 name: Profit — MB Daily Summary
 
-# Corre cada mañana de lunes a domingo a las 7:00 AM VET (11:00 UTC).
+# Corre cada mañana de lunes a domingo a las 4:00 AM VET (08:00 UTC).
 # El domingo muestra el resumen del sábado anterior.
 # Muestra el resumen COMPLETO del día anterior con fecha.
 # No tiene verificación de horario laboral — corre incondicionalmente.
+#
+# Adelantado de 7:00 AM a 4:00 AM VET (2026-09-14): GitHub Actions puede
+# retrasar runs programados varias horas (visto: 7:00 AM programado, llegó
+# 12:40 PM) — corriendo más temprano se gana margen para que el resumen de
+# AYER llegue antes de que arranque la actividad de HOY, evitando confundir
+# ambos reportes.
 #
 # Envía 2 mensajes:
 #   1. MB Internal Daily Summary → DISCORD_WEBHOOK_MB_INTERNAL
@@ -11,7 +17,7 @@ name: Profit — MB Daily Summary
 
 on:
   schedule:
-    - cron: "0 11 * * *"     # 7:00 AM VET (UTC-4) · todos los días
+    - cron: "0 8 * * *"      # 4:00 AM VET (UTC-4) · todos los días
   workflow_dispatch:
 
 env:
