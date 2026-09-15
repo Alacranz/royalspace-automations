@@ -39,7 +39,9 @@ ORG_ID          = os.environ["JIBBLE_ORG_ID"]
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK_ASISTENCIA"]
 
 # Ventanas horarias (hora, minuto) — Caracas
-ON_TIME_START = (8, 30)
+# ON_TIME_START ampliado de 8:30 a 7:00 (2026-09-15): llegar temprano no
+# debería marcarse como "FUERA DE RANGO" igual que llegar tarde.
+ON_TIME_START = (7, 0)
 ON_TIME_END   = (9, 15)
 LATE_START    = (9, 16)
 LATE_END      = (11, 0)
