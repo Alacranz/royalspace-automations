@@ -106,21 +106,22 @@ def post_calllogs(
         "offset":      offset,
     }
     last_exc: Exception | None = None
-    for attempt in range(3):
+    MAX_ATTEMPTS = 5   # antes 3 — Ringba ha mostrado rachas de 500 más sostenidas
+    for attempt in range(MAX_ATTEMPTS):
         try:
             resp = requests.post(url, headers=headers, json=body, timeout=60)
-            if resp.status_code in (500, 502, 503, 504) and attempt < 2:
-                wait = 30 * (attempt + 1)  # 30s, 60s
-                print(f"  [Ringba] {resp.status_code} — reintentando en {wait}s ({attempt + 2}/3)...")
+            if resp.status_code in (500, 502, 503, 504) and attempt < MAX_ATTEMPTS - 1:
+                wait = 30 * (attempt + 1)  # 30s, 60s, 90s, 120s
+                print(f"  [Ringba] {resp.status_code} — reintentando en {wait}s ({attempt + 2}/{MAX_ATTEMPTS})...")
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
             return resp.json()
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
             last_exc = e
-            if attempt < 2:
+            if attempt < MAX_ATTEMPTS - 1:
                 wait = 30 * (attempt + 1)
-                print(f"  [Ringba] {type(e).__name__} — reintentando en {wait}s ({attempt + 2}/3)...")
+                print(f"  [Ringba] {type(e).__name__} — reintentando en {wait}s ({attempt + 2}/{MAX_ATTEMPTS})...")
                 time.sleep(wait)
             else:
                 raise
