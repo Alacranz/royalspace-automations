@@ -85,7 +85,7 @@ def get_yesterday_utc_range(timezone_name: str) -> tuple[datetime, datetime]:
 
 # ── HTTP ──────────────────────────────────────────────────────────────────────
 
-def _post_calllogs(
+def post_calllogs(
     token: str,
     account_id: str,
     start_utc: datetime,
@@ -164,7 +164,7 @@ def get_publisher_summary(
         day_total = 0  # totalCount para este chunk (0 = desconocido)
 
         for page in range(1, MAX_PAGES + 1):
-            data   = _post_calllogs(token, account_id, chunk_start, chunk_end, PAGE_SIZE, offset)
+            data   = post_calllogs(token, account_id, chunk_start, chunk_end, PAGE_SIZE, offset)
             report = data.get("report") or {}
             records = report.get("records") or []
 
@@ -249,7 +249,7 @@ def get_call_metrics(
     offset       = 0
 
     for page in range(1, MAX_PAGES + 1):
-        data = _post_calllogs(token, account_id, start_utc, end_utc, PAGE_SIZE, offset)
+        data = post_calllogs(token, account_id, start_utc, end_utc, PAGE_SIZE, offset)
 
         if page == 1:
             try:

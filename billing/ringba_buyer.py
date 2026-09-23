@@ -15,10 +15,9 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pytz
-import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "profit"))
-from common.ringba_client import RINGBA_BASE_URL, PAGE_SIZE, MAX_PAGES, to_float
+from common.ringba_client import PAGE_SIZE, MAX_PAGES, to_float, post_calllogs
 
 
 def get_month_utc_range(year: int, month: int, tz_name: str = "America/Caracas") -> tuple[datetime, datetime]:
@@ -104,21 +103,7 @@ def get_buyer_revenue(
         offset = 0
 
         for _page in range(1, MAX_PAGES + 1):
-            url = f"{RINGBA_BASE_URL}/{account_id}/calllogs"
-            headers = {
-                "Authorization": f"Token {token}",
-                "Accept":        "application/json",
-                "Content-Type":  "application/json",
-            }
-            body = {
-                "reportStart": chunk_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "reportEnd":   chunk_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "size":        PAGE_SIZE,
-                "offset":      offset,
-            }
-            resp = requests.post(url, headers=headers, json=body, timeout=60)
-            resp.raise_for_status()
-            data = resp.json()
+            data = post_calllogs(token, account_id, chunk_start, chunk_end, PAGE_SIZE, offset)
             records = (data.get("report") or {}).get("records") or []
 
             if not records:
