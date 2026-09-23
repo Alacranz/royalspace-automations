@@ -109,7 +109,7 @@ def _post_calllogs(
     for attempt in range(3):
         try:
             resp = requests.post(url, headers=headers, json=body, timeout=60)
-            if resp.status_code in (502, 503, 504) and attempt < 2:
+            if resp.status_code in (500, 502, 503, 504) and attempt < 2:
                 wait = 30 * (attempt + 1)  # 30s, 60s
                 print(f"  [Ringba] {resp.status_code} — reintentando en {wait}s ({attempt + 2}/3)...")
                 time.sleep(wait)
