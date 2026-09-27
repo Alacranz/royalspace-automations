@@ -376,10 +376,13 @@ HUMAN_AGENT_PHRASES = [
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
-HAIKU_INPUT_COST       = 0.80 / 1_000_000   # $ per token (uncached)
-HAIKU_CACHE_WRITE_COST = 1.00 / 1_000_000   # $ per token (cache creation, 1.25×)
-HAIKU_CACHE_READ_COST  = 0.08 / 1_000_000   # $ per token (cache hit, 0.1×)
-HAIKU_OUTPUT_COST      = 4.00 / 1_000_000   # $ per token
+# Precios oficiales Claude Haiku 4.5 (platform.claude.com/docs/en/about-claude/pricing,
+# verificado 2026-09-27) — antes tenían los precios de Haiku 3.5 (retirado), que son
+# 20% más baratos, subestimando el costo real reportado en /stats.
+HAIKU_INPUT_COST       = 1.00 / 1_000_000   # $ per token (uncached)
+HAIKU_CACHE_WRITE_COST = 2.00 / 1_000_000   # $ per token (cache creation, TTL 1h = 2×)
+HAIKU_CACHE_READ_COST  = 0.10 / 1_000_000   # $ per token (cache hit, 0.1×)
+HAIKU_OUTPUT_COST      = 5.00 / 1_000_000   # $ per token
 
 
 def init_db() -> None:
@@ -949,12 +952,15 @@ async def chat(req: ChatRequest, request: Request) -> JSONResponse:
             "Only respond in English if the message clearly contains English words."
         ))
 
-    # System prompt: parte estática cacheada + contexto dinámico sin cachear
+    # System prompt: parte estática cacheada + contexto dinámico sin cachear.
+    # TTL de 1h (en vez del default de 5min) — en un chat de WhatsApp/Messenger
+    # el usuario suele tardar más de 5 min en responder, así que con TTL corto
+    # el cache expira y se repaga la escritura completa en casi cada turno.
     system_blocks: list[dict] = [
         {
             "type": "text",
             "text": SYSTEM_PROMPT,
-            "cache_control": {"type": "ephemeral"},
+            "cache_control": {"type": "ephemeral", "ttl": "1h"},
         }
     ]
     if context_parts:
