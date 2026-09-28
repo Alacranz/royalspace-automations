@@ -261,6 +261,11 @@ normalize_name(name) → strip() → remove "^\(\d+\)\s*" → lower()
 - URL: `https://royalspace-automations-production.up.railway.app`
 - Base de datos: SQLite (`conversations.db`) con tablas `messages` y `token_log`
 - Modelo: Claude Haiku (`claude-haiku-4-5-20251001`)
+- ⚠️ **Railway instala dependencias desde el `requirements.txt` de la RAÍZ del
+  repo, no desde `manychat/requirements.txt`** (confirmado 2026-09-28 — un
+  ModuleNotFoundError tumbó el bot en producción por editar solo el de
+  `manychat/`). Cualquier dependencia nueva para el bot debe agregarse en
+  **ambos** archivos, manteniéndolos en sync.
 
 ### Endpoints
 - `POST /chat` — recibe mensajes de ManyChat y responde via Claude
