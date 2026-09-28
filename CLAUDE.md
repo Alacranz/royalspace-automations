@@ -20,7 +20,7 @@ que derivan en llamadas trackeadas por Ringba.
 
 | Módulo | Carpeta | Propósito |
 |---|---|---|
-| Monitor de Profit | `profit/` | Ringba + Meta Ads → Discord (cada 30 min) |
+| Monitor de Profit | `profit/` | Ringba + Meta Ads → Discord (cada hora, horario laboral) |
 | Asistencia | `asistencia/` | Jibble → Discord + Excel (diario y mensual) |
 | Facturación | `billing/` | Zoho Books + Google Sheets (facturas automáticas) |
 | Monitoreo | `monitoring/` | Costos Railway/Anthropic + Executive Brief diario |
@@ -43,8 +43,8 @@ royalspace-automations/
 │
 ├── .github/
 │   └── workflows/
-│       ├── profit_true_profit.yml         # cada 30 min, L-V 8-20 / S 8-14 EST
-│       ├── profit_mb_daily_summary.yml    # L-V 8:00 AM EST (resumen de ayer)
+│       ├── profit_true_profit.yml         # cada hora, L-V 8-20 / S 8-14 EST — disparado desde Railway, no `schedule:`
+│       ├── profit_mb_daily_summary.yml    # 4:00 AM VET diario (resumen de ayer) — disparado desde Railway, no `schedule:`
 │       ├── asistencia_diaria.yml          # L-V 10:30 AM VET
 │       ├── asistencia_mensual.yml         # día 1 de cada mes, 10:00 AM VET
 │       ├── billing_invoices.yml           # día 28 de cada mes (facturas NET)
@@ -267,6 +267,26 @@ normalize_name(name) → strip() → remove "^\(\d+\)\s*" → lower()
 - `GET /health` — health check
 - `GET /stats` — estadísticas: `messages_today`, `messages_month`, `conversations_today`, `conversations_month`, `cost_today_usd`, `cost_month_usd`
 
+### GitHub Actions Dispatcher (2026-09-28)
+Como este proceso corre 24/7 en Railway, también actúa como disparador externo de
+`profit_true_profit.yml` y `profit_mb_daily_summary.yml` vía `workflow_dispatch`
+(GitHub API), en vez de depender del trigger nativo `schedule:` de GitHub Actions.
+
+**Motivo:** GitHub descarta con frecuencia los triggers de `schedule:` en repos de
+poca actividad — confirmado 2026-09-28: `profit_true_profit.yml` programado cada
+hora solo llegaba a correr 3-4 veces al día, y `profit_mb_daily_summary.yml`
+(4:00 AM VET) llegó a arrancar hasta las 12:28 PM. Ambos workflows YA NO tienen
+trigger `schedule:` — solo `workflow_dispatch:`.
+
+- Código: `manychat/main.py` → `start_github_scheduler()` (usa `apscheduler`, se
+  arranca en el evento `startup` de FastAPI)
+- Requiere el secret `GH_PAT_TOKEN` también como **variable de entorno en Railway**
+  (no solo en GitHub Secrets) — necesita permiso `Actions: write` sobre el repo
+- Horario: True Profit cada hora en horario laboral (L-V 8-19, S 8-13 EST);
+  MB Daily Summary todos los días a las 4:00 AM VET
+- Si se agrega otro workflow con este mismo problema de scheduling, replicar el
+  patrón acá en vez de confiar en `schedule:` de GitHub Actions
+
 ### Reglas críticas del bot
 - **IDENTITY RULE (absoluta):** Nunca revelar que es bot, IA o asistente virtual. Si el usuario pregunta, no confirmar ni negar — actuar normal y redirigir a llamar
 - **Imágenes:** Responder naturalmente como si pudiera verlas, no mencionar que no puede verlas
@@ -328,7 +348,7 @@ Configurado en `.claude/launch.json`
 | `RAILWAY_TOKEN` | Token Railway |
 | `ANTHROPIC_API_KEY` | API key Anthropic |
 | `WEBHOOK_STATS_URL` | https://royalspace-automations-production.up.railway.app/stats |
-| `GH_PAT_TOKEN` | GitHub Personal Access Token (billing) |
+| `GH_PAT_TOKEN` | GitHub Personal Access Token (billing + dispatcher de manychat/main.py — también debe estar como env var en Railway) |
 
 ### Variables (no secretos)
 | Variable | Valor | Descripción |

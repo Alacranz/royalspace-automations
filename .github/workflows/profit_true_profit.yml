@@ -1,7 +1,15 @@
 name: Profit — True Profit + MB Alerts
 
-# Corre cada hora. El script verifica horario laboral internamente:
-#   Lunes-Viernes 08:00-20:00 EST | Sábado 08:00-14:00 EST | Domingo: nunca
+# Disparado por workflow_dispatch — YA NO tiene trigger `schedule:`.
+# GitHub descarta con frecuencia los triggers de schedule en repos de poca
+# actividad (confirmado 2026-09-28: de ~24 corridas/hora programadas, solo
+# llegaban a correr 3-4 al día). En su lugar, el proceso de Railway
+# (manychat/main.py, corre 24/7) dispara este workflow vía la API de GitHub
+# cada hora en horario laboral: Lunes-Viernes 08:00-20:00 EST, Sábado
+# 08:00-14:00 EST, Domingo nunca. Ver manychat/main.py → start_github_scheduler().
+#
+# El script sigue verificando horario laboral internamente igual (is_business_hours),
+# como red de seguridad — force_run="false" en el dispatch automático respeta eso.
 # EST = UTC-5 (EDT = UTC-4 en verano). El script usa America/New_York (pytz).
 #
 # Envía 3 mensajes por run:
@@ -10,8 +18,6 @@ name: Profit — True Profit + MB Alerts
 #   3. MB External Perf.     → DISCORD_WEBHOOK_MB_EXTERNAL (servidor externo)
 
 on:
-  schedule:
-    - cron: "5 * * * *"   # 5 min pasada cada hora — evita colisión con profit_alerts (":00")
   workflow_dispatch:
     inputs:
       force_run:
@@ -54,4 +60,4 @@ jobs:
           CALLGRID_API_KEY:            ${{ secrets.CALLGRID_API_KEY }}
           CALLGRID_ORG_ID:             ${{ secrets.CALLGRID_ORG_ID }}
           SENTRY_DSN:                  ${{ secrets.SENTRY_DSN }}
-          FORCE_RUN:                   ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+          FORCE_RUN:                   ${{ github.event.inputs.force_run || 'false' }}

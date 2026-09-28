@@ -54,6 +54,7 @@ META_CONVERSIONS_TOKEN = os.environ.get("META_CONVERSIONS_TOKEN", "")
 RINGBA_WEBHOOK_SECRET  = os.environ.get("RINGBA_WEBHOOK_SECRET", "")
 MANYCHAT_WEBHOOK_SECRET = os.environ.get("MANYCHAT_WEBHOOK_SECRET", "")
 STATS_API_KEY           = os.environ.get("STATS_API_KEY", "")
+GH_PAT_TOKEN            = os.environ.get("GH_PAT_TOKEN", "")
 
 SYSTEM_PROMPT = """LANGUAGE RULE — ABSOLUTE PRIORITY (overrides everything else):
 - Read the user's CURRENT message AND the full conversation history to determine their language.
@@ -698,6 +699,80 @@ def _clean_zip_field(raw: str) -> str:
     return stripped
 
 
+# ── GitHub Actions Dispatcher ────────────────────────────────────────────────
+# GitHub descarta con frecuencia los triggers `schedule:` en repos de poca
+# actividad — confirmado: profit_true_profit.yml programado cada hora solo
+# llegaba a correr 3-4 veces al día. Este proceso corre 24/7 en Railway, así
+# que disparamos los workflows por workflow_dispatch en el horario exacto en
+# vez de depender del scheduler nativo de GitHub Actions (ver profit_true_profit.yml
+# y profit_mb_daily_summary.yml — ya no tienen trigger `schedule:`).
+
+GITHUB_REPO        = "Alacranz/royalspace-automations"
+GITHUB_ACTIONS_API = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows"
+
+
+def dispatch_github_workflow(workflow_file: str, inputs: dict | None = None) -> None:
+    if not GH_PAT_TOKEN:
+        print(f"[github_dispatch] GH_PAT_TOKEN no configurado — no se puede disparar {workflow_file}")
+        return
+    try:
+        resp = http_requests.post(
+            f"{GITHUB_ACTIONS_API}/{workflow_file}/dispatches",
+            headers={
+                "Authorization": f"Bearer {GH_PAT_TOKEN}",
+                "Accept": "application/vnd.github+json",
+            },
+            json={"ref": "main", **({"inputs": inputs} if inputs else {})},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        print(f"[github_dispatch] {workflow_file} disparado OK")
+    except http_requests.exceptions.RequestException as exc:
+        print(f"[github_dispatch] ERROR disparando {workflow_file}: {exc}")
+
+
+def start_github_scheduler() -> None:
+    if not GH_PAT_TOKEN:
+        print("[github_dispatch] GH_PAT_TOKEN no configurado — scheduler externo deshabilitado")
+        return
+
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+
+    scheduler = AsyncIOScheduler()
+
+    # True Profit + MB Alerts — cada hora, horario laboral (L-V 8-19, S 8-13 EST)
+    # force_run="false" para que el script siga respetando is_business_hours()
+    scheduler.add_job(
+        dispatch_github_workflow,
+        CronTrigger(day_of_week="mon-fri", hour="8-19", minute=5, timezone="America/New_York"),
+        args=["profit_true_profit.yml"],
+        kwargs={"inputs": {"force_run": "false"}},
+        id="true_profit_weekday",
+        misfire_grace_time=600,
+    )
+    scheduler.add_job(
+        dispatch_github_workflow,
+        CronTrigger(day_of_week="sat", hour="8-13", minute=5, timezone="America/New_York"),
+        args=["profit_true_profit.yml"],
+        kwargs={"inputs": {"force_run": "false"}},
+        id="true_profit_saturday",
+        misfire_grace_time=600,
+    )
+
+    # MB Daily Summary — todos los días, 4:00 AM VET
+    scheduler.add_job(
+        dispatch_github_workflow,
+        CronTrigger(hour=4, minute=0, timezone="America/Caracas"),
+        args=["profit_mb_daily_summary.yml"],
+        id="mb_daily_summary",
+        misfire_grace_time=600,
+    )
+
+    scheduler.start()
+    print("[github_dispatch] Scheduler externo iniciado (true_profit + mb_daily_summary)")
+
+
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 
 try:
@@ -712,8 +787,9 @@ app = FastAPI(title="Dentista Latino Webhook")
 
 
 @app.on_event("startup")
-def startup() -> None:
+async def startup() -> None:
     init_db()
+    start_github_scheduler()
 
 
 class ChatRequest(BaseModel):
