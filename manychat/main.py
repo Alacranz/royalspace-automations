@@ -789,7 +789,11 @@ app = FastAPI(title="Dentista Latino Webhook")
 @app.on_event("startup")
 async def startup() -> None:
     init_db()
-    start_github_scheduler()
+    try:
+        start_github_scheduler()
+    except Exception as exc:
+        # El scheduler es secundario — nunca debe tumbar el webhook principal.
+        print(f"[github_dispatch] ERROR al iniciar el scheduler externo: {exc}")
 
 
 class ChatRequest(BaseModel):
