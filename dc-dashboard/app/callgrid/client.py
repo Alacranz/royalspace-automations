@@ -24,7 +24,7 @@ CALLGRID_BASE_URL = "https://api.callgrid.com/api"
 
 # Extrae el sub_id numérico de un nombre tipo "(44) DC1" — mismo formato
 # verificado para VendorName/BuyerName en el otro repo.
-_SUBID_RE = re.compile(r'^\(\s*(\d+)\s*\)\s*(.*)$')
+_SUBID_RE = re.compile(r'\(\s*(\d+)\s*\)\s*(.*)$')
 
 MAX_ATTEMPTS = 5  # mismo patrón de reintentos que profit/common/ringba_client.py
 
@@ -34,7 +34,15 @@ def _bucket_value(bucket: dict, field: str) -> float:
 
 
 def _extract_sub_id(raw_name: str) -> str | None:
-    m = _SUBID_RE.match(raw_name.strip()) if raw_name else None
+    """
+    El campo "key" del bucket viene como "{Pivot}:(id) Nombre" — ej.
+    "SourceName:(44) DC1" — con el nombre del pivot como prefijo (verificado
+    2026-09-29 con datos reales). Se usa search() en vez de match() para no
+    depender de ese prefijo exacto.
+    """
+    if not raw_name:
+        return None
+    m = _SUBID_RE.search(raw_name.strip())
     return m.group(1) if m else None
 
 
