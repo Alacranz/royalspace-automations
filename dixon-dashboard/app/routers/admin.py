@@ -24,8 +24,10 @@ from app.models import (
     User,
     UserRole,
 )
+from app.auth.security import hash_password
 from app.services import settlement_engine as engine
 from app.services.ad_spend import ManualAdSpendProvider
+from app.services.audit import write_audit_log
 from app.services.formatting import money
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_role(UserRole.ROYALSPACE_ADMIN))])
@@ -203,6 +205,72 @@ def adjustments_create(
     ))
     db.commit()
     return RedirectResponse(url="/admin/settlements", status_code=303)
+
+
+# ── Usuarios ──────────────────────────────────────────────────────────────────
+
+@router.get("/users")
+def users_list(request: Request, error: str = "", db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    users = db.query(User).order_by(User.id).all()
+    partners = db.query(Partner).all()
+    media_buyers = db.query(MediaBuyer).all()
+    return templates.TemplateResponse(
+        request, "admin/users.html",
+        {"user": user, "users": users, "partners": partners, "media_buyers": media_buyers,
+         "roles": list(UserRole), "error": error or None},
+    )
+
+
+@router.post("/users/create")
+def users_create(
+    email: str = Form(...), password: str = Form(...), role: str = Form(...),
+    partner_id: str = Form(""), media_buyer_id: str = Form(""),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    email = email.strip().lower()
+    if db.query(User).filter_by(email=email).one_or_none() is not None:
+        return RedirectResponse(url="/admin/users?error=Ya+existe+un+usuario+con+ese+email", status_code=303)
+
+    try:
+        hashed = hash_password(password)
+    except ValueError as exc:
+        return RedirectResponse(url=f"/admin/users?error={exc}", status_code=303)
+
+    new_user = User(
+        email=email,
+        hashed_password=hashed,
+        role=UserRole(role),
+        partner_id=int(partner_id) if partner_id else None,
+        media_buyer_id=int(media_buyer_id) if media_buyer_id else None,
+    )
+    db.add(new_user)
+    db.flush()
+    write_audit_log(db, actor_user_id=user.id, entity_type="user", entity_id=new_user.id,
+                     action="created", before_state=None, after_state={"email": new_user.email, "role": role})
+    db.commit()
+    return RedirectResponse(url="/admin/users", status_code=303)
+
+
+@router.post("/users/{user_id}/deactivate")
+def users_deactivate(user_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    target = db.get(User, user_id)
+    if target is not None and target.is_active:
+        target.is_active = False
+        write_audit_log(db, actor_user_id=user.id, entity_type="user", entity_id=target.id,
+                         action="deactivated", before_state={"is_active": True}, after_state={"is_active": False})
+        db.commit()
+    return RedirectResponse(url="/admin/users", status_code=303)
+
+
+@router.post("/users/{user_id}/reactivate")
+def users_reactivate(user_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    target = db.get(User, user_id)
+    if target is not None and not target.is_active:
+        target.is_active = True
+        write_audit_log(db, actor_user_id=user.id, entity_type="user", entity_id=target.id,
+                         action="reactivated", before_state={"is_active": False}, after_state={"is_active": True})
+        db.commit()
+    return RedirectResponse(url="/admin/users", status_code=303)
 
 
 # ── Auditoría ─────────────────────────────────────────────────────────────────
