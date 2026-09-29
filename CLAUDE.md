@@ -25,6 +25,7 @@ que derivan en llamadas trackeadas por Ringba.
 | Facturación | `billing/` | Zoho Books + Google Sheets (facturas automáticas) |
 | Monitoreo | `monitoring/` | Costos Railway/Anthropic + Executive Brief diario |
 | ManyChat | `manychat/` | Bot de WhatsApp/Messenger para Dentista Latino (FastAPI) |
+| Dixon Dashboard | `dixon-dashboard/` | Liquidaciones semanales Dixon + media buyers, sync CallGrid (FastAPI + Postgres, servicio Railway independiente — ver `dixon-dashboard/README.md`) |
 
 ---
 

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Admin — Overview{% endblock %}
+{% block nav_links %}
+<a href="/admin" class="hover:text-white">Overview</a>
+<a href="/admin/media-buyers" class="hover:text-white">Media Buyers</a>
+<a href="/admin/ad-spend" class="hover:text-white">Ad Spend</a>
+<a href="/admin/settlements" class="hover:text-white">Settlements</a>
+<a href="/admin/sync" class="hover:text-white">CallGrid Sync</a>
+<a href="/admin/audit-log" class="hover:text-white">Audit Log</a>
+{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-6">Overview</h1>
+<div class="grid grid-cols-2 gap-4 mb-6">
+  <div class="card rounded-lg p-4"><div class="text-gray-400 text-xs">Partners</div><div class="text-xl font-semibold">{{ partners|length }}</div></div>
+  <div class="card rounded-lg p-4"><div class="text-gray-400 text-xs">Media Buyers</div><div class="text-xl font-semibold">{{ media_buyers|length }}</div></div>
+</div>
+<div class="card rounded-lg p-6">
+  <h2 class="text-lg font-medium mb-2">Último sync de CallGrid</h2>
+  {% if last_sync %}
+    <p class="text-sm text-gray-300">{{ last_sync.started_at }} — {{ last_sync.status.value }} — {{ last_sync.sources_synced }} sources</p>
+  {% else %}
+    <p class="text-sm text-gray-500">Todavía no se ha corrido ningún sync.</p>
+  {% endif %}
+  <a href="/admin/sync" class="inline-block mt-3 btn px-3 py-1.5 rounded text-sm">Ver historial / Sincronizar ahora</a>
+</div>
+{% endblock %}

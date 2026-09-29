@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Audit Log — Admin{% endblock %}
+{% block nav_links %}
+<a href="/admin" class="hover:text-white">Overview</a>
+<a href="/admin/media-buyers" class="hover:text-white">Media Buyers</a>
+<a href="/admin/ad-spend" class="hover:text-white">Ad Spend</a>
+<a href="/admin/settlements" class="hover:text-white">Settlements</a>
+<a href="/admin/sync" class="hover:text-white">CallGrid Sync</a>
+<a href="/admin/audit-log" class="hover:text-white">Audit Log</a>
+{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-6">Audit Log</h1>
+<div class="card rounded-lg p-6">
+  <table class="w-full text-sm">
+    <thead class="text-gray-400 text-left"><tr><th class="pb-2">Fecha</th><th class="pb-2">Entidad</th><th class="pb-2">Acción</th><th class="pb-2">Antes</th><th class="pb-2">Después</th></tr></thead>
+    <tbody>
+      {% for l in logs %}
+      <tr class="border-t border-[#2d2d4e] align-top">
+        <td class="py-2 whitespace-nowrap">{{ l.occurred_at.strftime("%d/%m %H:%M") }}</td>
+        <td class="py-2">{{ l.entity_type }}#{{ l.entity_id }}</td>
+        <td class="py-2">{{ l.action }}</td>
+        <td class="py-2 text-xs text-gray-500">{{ l.before_state }}</td>
+        <td class="py-2 text-xs text-gray-500">{{ l.after_state }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="py-4 text-gray-500 text-center">Sin actividad todavía</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

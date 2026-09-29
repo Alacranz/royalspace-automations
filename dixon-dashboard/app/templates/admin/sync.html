@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}CallGrid Sync{% endblock %}
+{% block nav_links %}
+<a href="/admin" class="hover:text-white">Overview</a>
+<a href="/admin/media-buyers" class="hover:text-white">Media Buyers</a>
+<a href="/admin/ad-spend" class="hover:text-white">Ad Spend</a>
+<a href="/admin/settlements" class="hover:text-white">Settlements</a>
+<a href="/admin/sync" class="hover:text-white">CallGrid Sync</a>
+<a href="/admin/audit-log" class="hover:text-white">Audit Log</a>
+{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-semibold">CallGrid Sync</h1>
+  <form method="post" action="/admin/sync/now"><button class="btn px-4 py-2 rounded font-medium">Sincronizar ahora</button></form>
+</div>
+<div class="card rounded-lg p-6">
+  <table class="w-full text-sm">
+    <thead class="text-gray-400 text-left">
+      <tr><th class="pb-2">Inicio</th><th class="pb-2">Estado</th><th class="pb-2">Rango</th><th class="pb-2">Sources</th><th class="pb-2">Error</th></tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+      <tr class="border-t border-[#2d2d4e]">
+        <td class="py-2">{{ r.started_at.strftime("%d/%m %H:%M") }}</td>
+        <td class="py-2">{{ r.status.value }}</td>
+        <td class="py-2">{{ r.date_range_start }} - {{ r.date_range_end }}</td>
+        <td class="py-2">{{ r.sources_synced }}</td>
+        <td class="py-2 text-red-400">{{ r.error_message or "" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="py-4 text-gray-500 text-center">Sin corridas todavía</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

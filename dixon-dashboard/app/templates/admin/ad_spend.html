@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Ad Spend — Admin{% endblock %}
+{% block nav_links %}
+<a href="/admin" class="hover:text-white">Overview</a>
+<a href="/admin/media-buyers" class="hover:text-white">Media Buyers</a>
+<a href="/admin/ad-spend" class="hover:text-white">Ad Spend</a>
+<a href="/admin/settlements" class="hover:text-white">Settlements</a>
+<a href="/admin/sync" class="hover:text-white">CallGrid Sync</a>
+<a href="/admin/audit-log" class="hover:text-white">Audit Log</a>
+{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-6">Ad Spend</h1>
+
+<div class="card rounded-lg p-6 mb-6">
+  <h2 class="text-lg font-medium mb-4">Registrar gasto</h2>
+  <form method="post" action="/admin/ad-spend/create" class="grid grid-cols-4 gap-4 text-sm items-end">
+    <div>
+      <label class="block text-gray-400 mb-1">Media Buyer</label>
+      <select name="media_buyer_id" class="w-full rounded bg-[#0f0f1a] border border-[#2d2d4e] px-3 py-2">
+        {% for mb in media_buyers %}<option value="{{ mb.id }}">{{ mb.display_name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-gray-400 mb-1">Fecha</label>
+      <input name="spend_date" type="date" required class="w-full rounded bg-[#0f0f1a] border border-[#2d2d4e] px-3 py-2">
+    </div>
+    <div>
+      <label class="block text-gray-400 mb-1">Monto (USD)</label>
+      <input name="amount" type="number" step="0.01" required class="w-full rounded bg-[#0f0f1a] border border-[#2d2d4e] px-3 py-2">
+    </div>
+    <div><button class="btn px-4 py-2 rounded font-medium w-full">Guardar</button></div>
+  </form>
+</div>
+
+<div class="card rounded-lg p-6">
+  <table class="w-full text-sm">
+    <thead class="text-gray-400 text-left"><tr><th class="pb-2">Fecha</th><th class="pb-2">Media Buyer</th><th class="pb-2">Monto</th></tr></thead>
+    <tbody>
+      {% for a in recent %}
+      <tr class="border-t border-[#2d2d4e]">
+        <td class="py-2">{{ a.spend_date }}</td>
+        <td class="py-2">{{ a.media_buyer_id }}</td>
+        <td class="py-2">{{ money(a.amount_cents) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="py-4 text-gray-500 text-center">Sin registros todavía</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
