@@ -6,7 +6,8 @@ Royalspace 2026 | Port de jibble_asistencia_1030.ps1 v1.5.5
 Lógica replicada exactamente:
   - Solo entradas de tipo "In" del día actual en hora Caracas (VET)
   - Primera marca por persona (la más temprana)
-  - Clasificación: A TIEMPO 08:30-09:15 | TARDE 09:16-11:00 | FUERA DE RANGO resto
+  - Clasificación: A TIEMPO 07:00-09:15 (09:10 desde 2026-09-30) | TARDE resto
+    de la hora hasta 11:00 | FUERA DE RANGO el resto — ver on_time_end_for()
   - Delta en minutos respecto a 09:00 (floor, sin segundos)
   - Corte de paginación por createdAt < inicio del día
   - Empate UTC/local → prefiere hora directa (sin convertir)
@@ -16,7 +17,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import requests
@@ -42,10 +43,24 @@ DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK_ASISTENCIA"]
 # ON_TIME_START ampliado de 8:30 a 7:00 (2026-09-15): llegar temprano no
 # debería marcarse como "FUERA DE RANGO" igual que llegar tarde.
 ON_TIME_START = (7, 0)
-ON_TIME_END   = (9, 15)
-LATE_START    = (9, 16)
 LATE_END      = (11, 0)
 BASE_TIME     = (9, 0)   # referencia para delta
+
+# El límite de "A TIEMPO" se endurece de 9:15 a 9:10 a partir del 2026-09-30
+# (decisión 2026-09-29 — el reporte del 29 ya corrió con la regla vieja, así
+# que el cambio se ata a la fecha, no al momento del deploy, para que no
+# importe si este código se despliega antes o después de que corra el
+# reporte del día 29).
+_ON_TIME_TIGHTEN_DATE = date(2026, 9, 30)
+
+
+def on_time_end_for(d: date) -> tuple[int, int]:
+    return (9, 10) if d >= _ON_TIME_TIGHTEN_DATE else (9, 15)
+
+
+def late_start_for(d: date) -> tuple[int, int]:
+    end = on_time_end_for(d)
+    return (end[0], end[1] + 1)
 
 # Excluidos (preferredName, minúsculas)
 EXCLUDE_NAMES = {"edwar"}
@@ -65,11 +80,11 @@ def send_discord(title: str, body: str) -> None:
 
 
 # ── Clasificación ─────────────────────────────────────────────────────────────
-def classify(hour: int, minute: int) -> str:
+def classify(hour: int, minute: int, on_time_end: tuple[int, int], late_start: tuple[int, int]) -> str:
     t = (hour, minute)
-    if ON_TIME_START <= t <= ON_TIME_END:
+    if ON_TIME_START <= t <= on_time_end:
         return "A TIEMPO"
-    if LATE_START <= t <= LATE_END:
+    if late_start <= t <= LATE_END:
         return "TARDE"
     return "FUERA DE RANGO"
 
@@ -88,6 +103,9 @@ def main() -> None:
     now_caracas = datetime.now(timezone.utc).astimezone(VET)
     today_start = now_caracas.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end   = today_start + timedelta(days=1)
+    on_time_end = on_time_end_for(now_caracas.date())
+    late_start  = late_start_for(now_caracas.date())
+    print(f"Regla de hoy ({now_caracas.date()}): A TIEMPO hasta {on_time_end[0]:02d}:{on_time_end[1]:02d}")
 
     token = get_token(CLIENT_ID, CLIENT_SECRET)
     print("Token OK")
@@ -158,7 +176,7 @@ def main() -> None:
 
         if pid in first_in:
             cin    = first_in[pid]
-            bucket = classify(cin.hour, cin.minute)
+            bucket = classify(cin.hour, cin.minute, on_time_end, late_start)
             delta  = minutes_delta(cin.hour, cin.minute)
             line   = f"{name} - {cin.strftime('%H:%M')}  {fmt_delta(delta)}"
 
