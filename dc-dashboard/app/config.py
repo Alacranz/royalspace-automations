@@ -1,5 +1,5 @@
 """
-Configuración — Dixon Settlement Dashboard
+Configuración — DC Dashboard
 
 Convención heredada de royalspace-automations: secrets requeridos via
 os.environ["X"] (KeyError si falta), opcionales via os.environ.get("X", default).
@@ -22,6 +22,6 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
 REPORTING_TIMEZONE = os.environ.get("REPORTING_TIMEZONE") or "America/New_York"
 
-# Entidades conocidas en CallGrid (ver CLAUDE.md / plan) — Dixon Colmenares.
-DIXON_PARTNER_NAME    = "Dixon Colmenares"
-DIXON_VENDOR_SUB_ID   = 40
+# Partner conocido en CallGrid (ver CLAUDE.md / plan).
+PARTNER_NAME           = "Dixon Colmenares"
+PARTNER_VENDOR_SUB_ID  = 40

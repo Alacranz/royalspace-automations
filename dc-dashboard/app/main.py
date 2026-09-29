@@ -12,13 +12,13 @@ from app.auth.deps import require_role
 from app.config import REPORTING_TIMEZONE
 from app.db import get_db
 from app.models import Settlement, User, UserRole
-from app.routers import admin, auth, dixon, media_buyer
+from app.routers import admin, auth, media_buyer, partner
 
-app = FastAPI(title="Dixon Settlement Dashboard")
+app = FastAPI(title="DC Dashboard")
 
 app.include_router(auth.router)
 app.include_router(admin.router)
-app.include_router(dixon.router)
+app.include_router(partner.router)
 app.include_router(media_buyer.router)
 
 

@@ -5,9 +5,9 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from app.config import SESSION_SECRET_KEY
 
-_serializer = URLSafeTimedSerializer(SESSION_SECRET_KEY, salt="dixon-dashboard-session")
+_serializer = URLSafeTimedSerializer(SESSION_SECRET_KEY, salt="dc-dashboard-session")
 
-SESSION_COOKIE_NAME = "dixon_session"
+SESSION_COOKIE_NAME = "dc_session"
 SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 14  # 14 días
 
 # bcrypt trunca a 72 bytes — se valida explícito en vez de dejar que falle silencioso.

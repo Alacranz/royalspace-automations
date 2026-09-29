@@ -1,5 +1,5 @@
 """
-Modelos — Dixon Settlement Dashboard
+Modelos — DC Dashboard
 
 Dinero SIEMPRE en centavos enteros (BigInteger), nunca float.
 Porcentajes en basis points (SmallInteger, 0-10000 = 0%-100%).

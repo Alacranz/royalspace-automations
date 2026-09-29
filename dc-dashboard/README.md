@@ -1,10 +1,13 @@
-# Dixon Settlement Dashboard
+# DC Dashboard
 
-Dashboard interno de Royalspace para gestionar a Dixon (partner) y los media
+Dashboard interno de Royalspace para gestionar a un partner y los media
 buyers que trabajan bajo él en el negocio de dental pay-per-call. Sincroniza
 payouts de CallGrid, registra gasto en ads, y calcula liquidaciones semanales
-(Lunes-Domingo) con reparto 70/30 (Dixon/media buyer) sobre la ganancia neta,
+(Lunes-Domingo) con reparto 70/30 (partner/media buyer) sobre la ganancia neta,
 con arrastre de déficit cuando una semana pierde dinero.
+
+Nombrado deliberadamente en genérico (`dc-dashboard`, sin el nombre real del
+partner) porque la URL pública se comparte con el media buyer.
 
 Ver el plan de diseño completo en `/Users/alacranz/.claude/plans/starry-soaring-goblet.md`
 (schema, algoritmo del motor de liquidaciones, decisiones de diseño).
@@ -28,12 +31,12 @@ cp .env.example .env
 # Completa CALLGRID_API_KEY, CALLGRID_ORG_ID, DATABASE_URL, SESSION_SECRET_KEY,
 # ADMIN_EMAIL, ADMIN_PASSWORD en .env
 
-createdb dixon_dashboard
-psql -d dixon_dashboard -c "CREATE EXTENSION IF NOT EXISTS btree_gist;"
+createdb dc_dashboard
+psql -d dc_dashboard -c "CREATE EXTENSION IF NOT EXISTS btree_gist;"
 
 export $(cat .env | xargs)   # o usa python-dotenv / direnv
 alembic upgrade head
-python scripts/seed.py       # crea Dixon, DC1, el admin, y liquidaciones demo
+python scripts/seed.py       # crea el partner demo, DC1, el admin, y liquidaciones demo
 uvicorn app.main:app --reload
 ```
 
@@ -41,7 +44,7 @@ Abre http://localhost:8000 — te redirige a `/login`.
 
 Usuarios demo creados por `scripts/seed.py`:
 - `ADMIN_EMAIL` / `ADMIN_PASSWORD` (los que pongas en `.env`) — ROYALSPACE_ADMIN
-- `dixon@example.com` / `changeme123` — DIXON_MANAGER
+- `partner@example.com` / `changeme123` — DIXON_MANAGER (rol interno; el login real créalo desde /admin/users)
 - `dc1@example.com` / `changeme123` — MEDIA_BUYER
 
 **Cambia esas contraseñas demo antes de usar esto en producción con datos reales.**
@@ -76,7 +79,7 @@ Source, y ajusta el valor de `pivot` en `app/callgrid/client.py`.
    clic en **"+ New"** → **"GitHub Repo"** → selecciona `royalspace-automations`
    otra vez (Railway permite varios servicios del mismo repo).
 2. **Importante — evita el bug que ya tuvimos con `manychat`:** en el nuevo
-   servicio, entra a **Settings → Root Directory** y ponlo en `dixon-dashboard`.
+   servicio, entra a **Settings → Root Directory** y ponlo en `dc-dashboard`.
    Sin esto, Railway puede intentar instalar dependencias desde el
    `requirements.txt` equivocado (el de la raíz del repo, pensado para
    `manychat`) en vez del de esta carpeta — exactamente el problema que tumbó
@@ -108,7 +111,7 @@ plan de diseño. Resumen rápido:
 - `app/models.py` — schema completo (dinero en centavos enteros, nunca float)
 - `app/services/settlement_engine.py` — el núcleo financiero
 - `app/callgrid/` — cliente + sincronización con CallGrid
-- `app/routers/` — rutas por rol (admin, dixon, media_buyer)
+- `app/routers/` — rutas por rol (admin, partner, media_buyer)
 - `migrations/` — Alembic, incluye las restricciones `EXCLUDE USING gist` de Postgres
 - `tests/test_settlement_engine.py` — suite de correctitud financiera
 
@@ -118,4 +121,4 @@ plan de diseño. Resumen rápido:
 - Integración con Meta Marketing API para gasto en ads automático
   (`app/services/ad_spend.py::AdSpendProvider` ya está preparado para esto)
 - Notificaciones
-- Soporte para partners adicionales además de Dixon
+- Soporte para partners adicionales además del primero

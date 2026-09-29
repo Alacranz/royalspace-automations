@@ -1,5 +1,5 @@
 """
-Motor de liquidaciones — Dixon Settlement Dashboard
+Motor de liquidaciones — DC Dashboard
 
 Núcleo financiero. Dinero siempre en centavos enteros. Ver
 /Users/alacranz/.claude/plans/starry-soaring-goblet.md para el diseño completo.

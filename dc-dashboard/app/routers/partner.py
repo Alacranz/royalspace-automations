@@ -11,7 +11,7 @@ from app.db import get_db
 from app.models import MediaBuyer, Settlement, User, UserRole
 from app.services.formatting import money
 
-router = APIRouter(prefix="/dixon", dependencies=[Depends(require_role(UserRole.DIXON_MANAGER, UserRole.ROYALSPACE_ADMIN))])
+router = APIRouter(prefix="/partner", dependencies=[Depends(require_role(UserRole.DIXON_MANAGER, UserRole.ROYALSPACE_ADMIN))])
 templates = Jinja2Templates(directory="app/templates")
 
 
@@ -27,7 +27,7 @@ def overview(request: Request, db: Session = Depends(get_db), user: User = Depen
     week_start = _this_monday()
 
     rows = []
-    totals = {"payout": 0, "ad_spend": 0, "net": 0, "mb": 0, "dixon": 0}
+    totals = {"payout": 0, "ad_spend": 0, "net": 0, "mb": 0, "partner": 0}
     for mb in media_buyers:
         s = db.query(Settlement).filter_by(media_buyer_id=mb.id, period_start=week_start).one_or_none()
         rows.append({
@@ -36,17 +36,17 @@ def overview(request: Request, db: Session = Depends(get_db), user: User = Depen
             "ad_spend": money(s.ad_spend_cents) if s else "—",
             "net": money(s.net_profit_cents) if s else "—",
             "mb_earnings": money(s.mb_earnings_cents) if s else "—",
-            "dixon_earnings": money(s.dixon_earnings_cents) if s else "—",
+            "partner_earnings": money(s.dixon_earnings_cents) if s else "—",
         })
         if s:
             totals["payout"] += s.gross_payout_cents
             totals["ad_spend"] += s.ad_spend_cents
             totals["net"] += s.net_profit_cents
             totals["mb"] += s.mb_earnings_cents
-            totals["dixon"] += s.dixon_earnings_cents
+            totals["partner"] += s.dixon_earnings_cents
 
     return templates.TemplateResponse(
-        request, "dixon/overview.html",
+        request, "partner/overview.html",
         {"user": user, "rows": rows, "week_start": week_start,
          "totals": {k: money(v) for k, v in totals.items()}},
     )

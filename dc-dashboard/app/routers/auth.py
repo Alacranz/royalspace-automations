@@ -16,7 +16,7 @@ templates = Jinja2Templates(directory="app/templates")
 def _home_for_role(role: UserRole) -> str:
     return {
         UserRole.ROYALSPACE_ADMIN: "/admin",
-        UserRole.DIXON_MANAGER: "/dixon",
+        UserRole.DIXON_MANAGER: "/partner",
         UserRole.MEDIA_BUYER: "/mb",
     }[role]
 

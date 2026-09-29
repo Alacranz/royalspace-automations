@@ -25,7 +25,7 @@ que derivan en llamadas trackeadas por Ringba.
 | Facturación | `billing/` | Zoho Books + Google Sheets (facturas automáticas) |
 | Monitoreo | `monitoring/` | Costos Railway/Anthropic + Executive Brief diario |
 | ManyChat | `manychat/` | Bot de WhatsApp/Messenger para Dentista Latino (FastAPI) |
-| Dixon Dashboard | `dixon-dashboard/` | Liquidaciones semanales Dixon + media buyers, sync CallGrid (FastAPI + Postgres, servicio Railway independiente — ver `dixon-dashboard/README.md`) |
+| DC Dashboard | `dc-dashboard/` | Liquidaciones semanales de un partner + sus media buyers, sync CallGrid (FastAPI + Postgres, servicio Railway independiente — nombre genérico a propósito, el partner real es Dixon Colmenares pero no debe aparecer en URLs/branding porque el link se comparte con el media buyer — ver `dc-dashboard/README.md`) |
 
 ---
 

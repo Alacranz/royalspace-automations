@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Overview — Dixon{% endblock %}
+{% block title %}Overview{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-semibold mb-6">Semana actual ({{ week_start.strftime("%d/%m/%Y") }})</h1>
 
@@ -8,14 +8,14 @@
   <div class="card rounded-lg p-4"><div class="text-gray-400 text-xs">Ad Spend</div><div class="text-xl font-semibold">{{ totals.ad_spend }}</div></div>
   <div class="card rounded-lg p-4"><div class="text-gray-400 text-xs">Ganancia Neta</div><div class="text-xl font-semibold">{{ totals.net }}</div></div>
   <div class="card rounded-lg p-4"><div class="text-gray-400 text-xs">Comisiones MB</div><div class="text-xl font-semibold">{{ totals.mb }}</div></div>
-  <div class="card rounded-lg p-4"><div class="text-gray-400 text-xs">Tus Ganancias</div><div class="text-xl font-semibold text-green-400">{{ totals.dixon }}</div></div>
+  <div class="card rounded-lg p-4"><div class="text-gray-400 text-xs">Tus Ganancias</div><div class="text-xl font-semibold text-green-400">{{ totals.partner }}</div></div>
 </div>
 
 <div class="card rounded-lg p-6">
   <h2 class="text-lg font-medium mb-4">Media Buyers</h2>
   <table class="w-full text-sm">
     <thead class="text-gray-400 text-left">
-      <tr><th class="pb-2">Nombre</th><th class="pb-2">Payout</th><th class="pb-2">Ad Spend</th><th class="pb-2">Neto</th><th class="pb-2">MB %</th><th class="pb-2">Dixon</th></tr>
+      <tr><th class="pb-2">Nombre</th><th class="pb-2">Payout</th><th class="pb-2">Ad Spend</th><th class="pb-2">Neto</th><th class="pb-2">MB %</th><th class="pb-2">Tú</th></tr>
     </thead>
     <tbody>
       {% for r in rows %}
@@ -25,7 +25,7 @@
         <td class="py-2">{{ r.ad_spend }}</td>
         <td class="py-2">{{ r.net }}</td>
         <td class="py-2">{{ r.mb_earnings }}</td>
-        <td class="py-2">{{ r.dixon_earnings }}</td>
+        <td class="py-2">{{ r.partner_earnings }}</td>
       </tr>
       {% else %}
       <tr><td colspan="6" class="py-4 text-gray-500 text-center">Sin media buyers todavía</td></tr>

@@ -1,5 +1,5 @@
 """
-CallGrid API client — Dixon Settlement Dashboard
+CallGrid API client — DC Dashboard
 
 Adaptado de profit/common/callgrid_client.py en royalspace-automations. Usa el
 endpoint agregado POST /api/reports/stats — el mismo que usa internamente el
