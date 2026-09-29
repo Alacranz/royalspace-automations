@@ -42,12 +42,14 @@ uvicorn app.main:app --reload
 
 Abre http://localhost:8000 — te redirige a `/login`.
 
-Usuarios demo creados por `scripts/seed.py`:
+Usuarios creados por `scripts/seed.py`:
 - `ADMIN_EMAIL` / `ADMIN_PASSWORD` (los que pongas en `.env`) — ROYALSPACE_ADMIN
-- `partner@example.com` / `changeme123` — DIXON_MANAGER (rol interno; el login real créalo desde /admin/users)
-- `dc1@example.com` / `changeme123` — MEDIA_BUYER
+- Solo con `SEED_DEMO_DATA=true`: `partner@example.com` / `changeme123` — DIXON_MANAGER,
+  `dc1@example.com` / `changeme123` — MEDIA_BUYER, y 3 liquidaciones demo de enero 2026
 
-**Cambia esas contraseñas demo antes de usar esto en producción con datos reales.**
+**Nunca pongas `SEED_DEMO_DATA` en Railway.** Sin ella, el seed (que corre en cada
+deploy) borra los datos demo si existen — la liquidación demo bloqueada deja un
+déficit de $20 que se arrastraría a la primera liquidación real de DC1.
 
 ## Verificar el motor financiero
 

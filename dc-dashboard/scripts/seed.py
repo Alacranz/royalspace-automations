@@ -6,11 +6,17 @@ Crea:
   - Partner demo (sub_id 40) + su primer media buyer DC1 (sub_id 44)
   - Regla de compensación 30% vigente desde el primer lunes de 2026
   - El primer usuario ROYALSPACE_ADMIN (desde ADMIN_EMAIL/ADMIN_PASSWORD, si no existe ya uno)
+
+Solo con SEED_DEMO_DATA=true (desarrollo local — NUNCA en producción):
   - Un usuario DIXON_MANAGER y uno MEDIA_BUYER de ejemplo (password: "changeme123")
   - Dos liquidaciones demo que reproducen EXACTO los dos ejemplos numéricos del spec:
       Ejemplo A: payout $100, ads $20            -> MB $24.00 / Partner $56.00
       Ejemplo B (2 semanas): payout $100/ads $120 -> deficit $20
                               payout $200/ads $100 -> MB $24.00 / Partner $56.00, deficit $0
+
+Sin SEED_DEMO_DATA=true, en cambio BORRA esos datos demo si existen (3 semanas de
+enero 2026 de DC1 + los 2 usuarios @example.com). Importa: la liquidación demo
+bloqueada deja un déficit de $20 que se arrastraría a la primera liquidación real.
 
 Uso:
     python scripts/seed.py
@@ -28,20 +34,87 @@ from app.config import ADMIN_EMAIL, ADMIN_PASSWORD, PARTNER_NAME, PARTNER_VENDOR
 from app.db import Base, SessionLocal, engine
 from app.models import (
     AdSpend,
+    AuditLog,
     CallgridSource,
+    CallPayoutHistory,
     CompensationRule,
     DailyCallgridMetric,
+    FinancialAdjustment,
     MediaBuyer,
     MediaBuyerSourceMapping,
     Partner,
+    Settlement,
+    SettlementLineItem,
     User,
     UserRole,
 )
+from app.services.audit import write_audit_log
 from app.services.settlement_engine import approve_settlement, compute_settlement, lock_settlement, mark_paid
+
+SEED_DEMO_DATA = (os.environ.get("SEED_DEMO_DATA") or "").strip().lower() == "true"
+DEMO_EMAILS = ("partner@example.com", "dc1@example.com")
 
 
 def _next_monday(d: date) -> date:
     return d + timedelta(days=(7 - d.weekday()) % 7 or 7) if d.weekday() != 0 else d
+
+
+def remove_demo_data(db, mb1: MediaBuyer, source1: CallgridSource, week1: date, actor_user_id: int | None) -> None:
+    """Borra exactamente lo que crea la parte demo de este seed (idempotente)."""
+    start, end = week1, week1 + timedelta(days=20)  # las 3 semanas demo (Ejemplo A + B)
+
+    settlements = db.query(Settlement).filter(
+        Settlement.media_buyer_id == mb1.id, Settlement.period_start >= start, Settlement.period_start <= end,
+    ).all()
+    settlement_ids = [s.id for s in settlements]
+
+    if settlement_ids and db.query(FinancialAdjustment).filter(
+        (FinancialAdjustment.source_settlement_id.in_(settlement_ids))
+        | (FinancialAdjustment.applied_to_settlement_id.in_(settlement_ids))
+    ).count():
+        print("AVISO: hay ajustes financieros ligados a las liquidaciones demo — no se borra nada automáticamente.")
+        return
+
+    ad_spend_q = db.query(AdSpend).filter(
+        AdSpend.media_buyer_id == mb1.id, AdSpend.spend_date >= start, AdSpend.spend_date <= end,
+    )
+    ad_spend_q.update({AdSpend.superseded_by_id: None}, synchronize_session=False)
+    counts = {
+        "settlement_line_items": db.query(SettlementLineItem).filter(
+            SettlementLineItem.settlement_id.in_(settlement_ids)).delete(synchronize_session=False),
+        "settlements": db.query(Settlement).filter(
+            Settlement.id.in_(settlement_ids)).delete(synchronize_session=False),
+        "ad_spend": ad_spend_q.delete(synchronize_session=False),
+        "daily_callgrid_metrics": db.query(DailyCallgridMetric).filter(
+            DailyCallgridMetric.callgrid_source_id == source1.id,
+            DailyCallgridMetric.metric_date >= start, DailyCallgridMetric.metric_date <= end,
+        ).delete(synchronize_session=False),
+        "call_payout_history": db.query(CallPayoutHistory).filter(
+            CallPayoutHistory.callgrid_source_id == source1.id,
+            CallPayoutHistory.metric_date >= start, CallPayoutHistory.metric_date <= end,
+        ).delete(synchronize_session=False),
+    }
+
+    # Usuarios demo: se borran, salvo que ya tengan historial en el audit log
+    # (ej. si alguien los usó para registrar algo) — ahí solo se desactivan.
+    users_removed = users_deactivated = 0
+    for user in db.query(User).filter(User.email.in_(DEMO_EMAILS)).all():
+        if db.query(AuditLog).filter(AuditLog.actor_user_id == user.id).count():
+            if user.is_active:
+                user.is_active = False
+                users_deactivated += 1
+        else:
+            db.delete(user)
+            users_removed += 1
+    counts["users_removed"], counts["users_deactivated"] = users_removed, users_deactivated
+
+    if not any(counts.values()):
+        return
+
+    write_audit_log(db, actor_user_id=actor_user_id, entity_type="demo_data", entity_id=0,
+                    action="removed", before_state={"from": str(start), "to": str(end)}, after_state=counts)
+    db.commit()
+    print(f"Datos demo eliminados: {counts}")
 
 
 def main() -> None:
@@ -94,6 +167,19 @@ def main() -> None:
                                      created_by_user_id=admin_user.id if admin_user else 1)
             db.add(rule)
             print("Creada CompensationRule: 30% vigente desde", week1)
+
+        db.commit()
+
+        if not SEED_DEMO_DATA:
+            # El seed corre dentro del startCommand de Railway — si la limpieza falla,
+            # que no tumbe el deploy (uvicorn nunca arrancaría).
+            try:
+                remove_demo_data(db, mb1, source1, week1, admin_user.id if admin_user else None)
+            except Exception as exc:
+                db.rollback()
+                print(f"AVISO: no se pudieron borrar los datos demo ({exc}) — el dashboard arranca igual.")
+            print("\nSeed completo (sin datos demo).")
+            return
 
         partner_manager = db.query(User).filter_by(email="partner@example.com").one_or_none()
         if partner_manager is None:
