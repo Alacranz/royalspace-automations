@@ -10,10 +10,25 @@
 <a href="/admin/audit-log" class="hover:text-white">Audit Log</a>
 {% endblock %}
 {% block content %}
-<h1 class="text-2xl font-semibold mb-6">Ad Spend</h1>
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-semibold">Ad Spend</h1>
+  <form method="post" action="/admin/ad-spend/sync-meta-now">
+    <button class="btn px-4 py-2 rounded font-medium">Sincronizar desde Meta ahora</button>
+  </form>
+</div>
+
+{% if error %}
+<div class="bg-red-900/40 border border-red-700 text-red-200 text-sm rounded p-3 mb-4">{{ error }}</div>
+{% endif %}
+
+<p class="text-xs text-gray-500 mb-6">
+  Los media buyers con cuenta de Meta configurada (en Media Buyers) se sincronizan
+  automáticamente cada noche a las 3 AM. El botón de arriba fuerza una sincronización inmediata.
+  La carga manual sigue disponible para corregir un día específico.
+</p>
 
 <div class="card rounded-lg p-6 mb-6">
-  <h2 class="text-lg font-medium mb-4">Registrar gasto</h2>
+  <h2 class="text-lg font-medium mb-4">Registrar gasto manual</h2>
   <form method="post" action="/admin/ad-spend/create" class="grid grid-cols-4 gap-4 text-sm items-end">
     <div>
       <label class="block text-gray-400 mb-1">Media Buyer</label>
@@ -35,16 +50,17 @@
 
 <div class="card rounded-lg p-6">
   <table class="w-full text-sm">
-    <thead class="text-gray-400 text-left"><tr><th class="pb-2">Fecha</th><th class="pb-2">Media Buyer</th><th class="pb-2">Monto</th></tr></thead>
+    <thead class="text-gray-400 text-left"><tr><th class="pb-2">Fecha</th><th class="pb-2">Media Buyer</th><th class="pb-2">Monto</th><th class="pb-2">Origen</th></tr></thead>
     <tbody>
       {% for a in recent %}
       <tr class="border-t border-[#2d2d4e]">
         <td class="py-2">{{ a.spend_date }}</td>
         <td class="py-2">{{ a.media_buyer_id }}</td>
         <td class="py-2">{{ money(a.amount_cents) }}</td>
+        <td class="py-2 text-xs text-gray-500">{{ a.notes or "Manual" }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="3" class="py-4 text-gray-500 text-center">Sin registros todavía</td></tr>
+      <tr><td colspan="4" class="py-4 text-gray-500 text-center">Sin registros todavía</td></tr>
       {% endfor %}
     </tbody>
   </table>

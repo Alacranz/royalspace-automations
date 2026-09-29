@@ -95,13 +95,37 @@ Source, y ajusta el valor de `pivot` en `app/callgrid/client.py`.
    - `SESSION_SECRET_KEY` — genera uno nuevo: `python3 -c "import secrets; print(secrets.token_hex(32))"`
    - `ADMIN_EMAIL`, `ADMIN_PASSWORD` — tu login inicial de ROYALSPACE_ADMIN
    - `REPORTING_TIMEZONE` — `America/New_York` (default) o el que corresponda
+   - `META_ACCESS_TOKEN`, `META_API_VERSION` — opcionales, solo si quieres que
+     el ad spend de algún media buyer se importe automático desde Meta Ads en
+     vez de cargarlo a mano (ver sección de Meta Ads más abajo)
 5. Railway corre `railway.json` en cada deploy: aplica las migraciones,
    corre el seed (idempotente — no duplica nada si ya existe), y levanta el server.
-6. El resync nocturno de CallGrid (últimos 7 días) corre automáticamente
+6. El resync nocturno (CallGrid + Meta Ads, últimos 7 días) corre automáticamente
    dentro del mismo proceso a las 3:00 AM (`REPORTING_TIMEZONE`) — no depende
    de ningún cron externo (mismo patrón usado en `manychat/main.py` de
    `royalspace-automations`, adoptado tras confirmar que el `schedule:` nativo
    de GitHub Actions no es confiable).
+
+## Ad spend automático desde Meta Ads
+
+Por partner (ej. Dixon), cada media buyer puede tener su propia cuenta de
+Meta Ads. Para activar la importación automática:
+
+1. La persona que va a leer los datos (ej. tú) necesita acceso de al menos
+   **"Ver rendimiento"** sobre la cuenta de anuncios del media buyer —
+   pídelo directo (Business Settings → Cuentas → Solicitar acceso a una
+   cuenta publicitaria, si el dueño no tiene Business Manager, esto le
+   manda una solicitud que aprueba desde su propio Ads Manager).
+2. Genera un Access Token con permiso `ads_read` que tenga ese acceso, y
+   ponlo como `META_ACCESS_TOKEN` en las variables de Railway.
+3. En `/admin/media-buyers`, en la columna "Cuenta de Meta Ads", pega el ID
+   numérico de la cuenta (sin el prefijo `act_`) para ese media buyer.
+4. Desde esa noche en adelante el gasto de ese media buyer se sincroniza
+   solo. Para forzarlo ya mismo: botón "Sincronizar desde Meta ahora" en
+   `/admin/ad-spend`.
+
+Un media buyer sin cuenta de Meta configurada sigue usando la carga manual
+sin ningún problema — ambos métodos conviven (`app/services/ad_spend.py`).
 
 ## Estructura
 
@@ -111,6 +135,7 @@ plan de diseño. Resumen rápido:
 - `app/models.py` — schema completo (dinero en centavos enteros, nunca float)
 - `app/services/settlement_engine.py` — el núcleo financiero
 - `app/callgrid/` — cliente + sincronización con CallGrid
+- `app/meta/` — cliente + sincronización con Meta Ads (ad spend automático)
 - `app/routers/` — rutas por rol (admin, partner, media_buyer)
 - `migrations/` — Alembic, incluye las restricciones `EXCLUDE USING gist` de Postgres
 - `tests/test_settlement_engine.py` — suite de correctitud financiera
@@ -118,7 +143,5 @@ plan de diseño. Resumen rápido:
 ## Fases futuras (no implementadas todavía)
 
 - Webhooks de CallGrid (hoy solo hay sync periódico + manual)
-- Integración con Meta Marketing API para gasto en ads automático
-  (`app/services/ad_spend.py::AdSpendProvider` ya está preparado para esto)
 - Notificaciones
 - Soporte para partners adicionales además del primero

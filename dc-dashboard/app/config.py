@@ -40,3 +40,11 @@ REPORTING_TIMEZONE = os.environ.get("REPORTING_TIMEZONE") or "America/New_York"
 # Partner conocido en CallGrid (ver CLAUDE.md / plan).
 PARTNER_NAME           = "Dixon Colmenares"
 PARTNER_VENDOR_SUB_ID  = 40
+
+# Meta Ads — opcional. Si no está seteado, el ad spend sigue siendo 100% manual
+# (MediaBuyer.meta_ad_account_id también debe estar seteado para que un media
+# buyer específico se sincronice automáticamente).
+META_ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "")
+# Mismo patrón que royalspace-automations: usar `or` (no `.get(key, default)`)
+# para que una env var vacía no genere doble slash en la URL del Graph API.
+META_API_VERSION  = os.environ.get("META_API_VERSION") or "v25.0"

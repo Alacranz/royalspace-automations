@@ -79,12 +79,20 @@ def export_settlements_csv(db: Session = Depends(get_db), user: User = Depends(r
 
 
 def _run_nightly_sync() -> None:
-    from app.callgrid.sync import nightly_resync
+    from app.callgrid.sync import nightly_resync as callgrid_nightly_resync
     from app.db import SessionLocal
+    from app.meta.sync import nightly_resync as meta_nightly_resync
 
     db = SessionLocal()
     try:
-        nightly_resync(db, days_back=7, report_timezone=REPORTING_TIMEZONE)
+        try:
+            callgrid_nightly_resync(db, days_back=7, report_timezone=REPORTING_TIMEZONE)
+        except Exception as exc:
+            print(f"[scheduler] ERROR en resync de CallGrid: {exc}")
+        try:
+            meta_nightly_resync(db, days_back=7)
+        except Exception as exc:
+            print(f"[scheduler] ERROR en resync de Meta Ads: {exc}")
     finally:
         db.close()
 

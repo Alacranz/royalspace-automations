@@ -104,6 +104,25 @@ def create_media_buyer(
     return RedirectResponse(url="/admin/media-buyers", status_code=303)
 
 
+@router.post("/media-buyers/{media_buyer_id}/meta-account")
+def set_meta_ad_account(
+    media_buyer_id: int, meta_ad_account_id: str = Form(""),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    mb = db.get(MediaBuyer, media_buyer_id)
+    if mb is None:
+        return RedirectResponse(url="/admin/media-buyers", status_code=303)
+    before = {"meta_ad_account_id": mb.meta_ad_account_id}
+    # Acepta que peguen la URL/ID con "act_" por error y lo limpia.
+    cleaned = meta_ad_account_id.strip().removeprefix("act_") or None
+    mb.meta_ad_account_id = cleaned
+    write_audit_log(db, actor_user_id=user.id, entity_type="media_buyer", entity_id=mb.id,
+                     action="meta_ad_account_id_updated", before_state=before,
+                     after_state={"meta_ad_account_id": cleaned})
+    db.commit()
+    return RedirectResponse(url="/admin/media-buyers", status_code=303)
+
+
 @router.post("/media-buyers/{media_buyer_id}/rate")
 def change_compensation_rate(
     media_buyer_id: int, mb_percentage_bps: int = Form(...),
@@ -123,12 +142,12 @@ def change_compensation_rate(
 # ── Ad spend ──────────────────────────────────────────────────────────────────
 
 @router.get("/ad-spend")
-def ad_spend_list(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def ad_spend_list(request: Request, error: str = "", db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     media_buyers = db.query(MediaBuyer).all()
     recent = db.query(AdSpend).filter_by(is_current=True).order_by(AdSpend.spend_date.desc()).limit(50).all()
     return templates.TemplateResponse(
         request, "admin/ad_spend.html",
-        {"user": user, "media_buyers": media_buyers, "recent": recent, "money": money},
+        {"user": user, "media_buyers": media_buyers, "recent": recent, "money": money, "error": error or None},
     )
 
 
@@ -143,6 +162,17 @@ def ad_spend_create(
         amount_cents=round(amount * 100), actor_user_id=user.id, notes=notes or None,
     )
     return RedirectResponse(url="/admin/ad-spend", status_code=303)
+
+
+@router.post("/ad-spend/sync-meta-now")
+def ad_spend_sync_meta_now(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    from app.config import META_ACCESS_TOKEN
+    from app.meta.sync import nightly_resync as meta_nightly_resync
+
+    error = "" if META_ACCESS_TOKEN else "META_ACCESS_TOKEN+no+esta+configurado+en+las+variables+del+servicio"
+    if not error:
+        meta_nightly_resync(db, days_back=7)
+    return RedirectResponse(url=f"/admin/ad-spend{'?error=' + error if error else ''}", status_code=303)
 
 
 # ── Liquidaciones ─────────────────────────────────────────────────────────────

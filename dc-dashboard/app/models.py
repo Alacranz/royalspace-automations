@@ -110,6 +110,11 @@ class MediaBuyer(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
 
+    # ID numérico de la cuenta de Meta Ads (sin prefijo "act_") — si está
+    # presente, el sync nocturno importa su gasto automáticamente vía
+    # MetaAdSpendProvider. NULL = sigue siendo carga manual.
+    meta_ad_account_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     partner: Mapped["Partner"] = relationship(back_populates="media_buyers")
 
 

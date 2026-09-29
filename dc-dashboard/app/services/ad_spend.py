@@ -1,9 +1,9 @@
 """
 Ad Spend — versionado (nunca se muta en el lugar) + abstracción de proveedor.
 
-ManualAdSpendProvider es lo único activo en Fase 1. MetaAdSpendProvider (Fase 3,
-importación automática desde Meta Marketing API) implementará la misma interfaz
-sin tocar el motor de liquidaciones.
+ManualAdSpendProvider y MetaAdSpendProvider implementan la misma interfaz —
+el motor de liquidaciones (settlement_engine.py) no sabe ni le importa de
+dónde vino cada fila de ad_spend, solo lee is_current=True.
 """
 from __future__ import annotations
 
@@ -61,6 +61,34 @@ class ManualAdSpendProvider(AdSpendProvider):
 
         db.commit()
         return new_row
+
+
+class MetaAdSpendProvider(AdSpendProvider):
+    """
+    Importa el gasto desde Meta Ads Graph API para media buyers con
+    MediaBuyer.meta_ad_account_id seteado. Reusa la misma lógica de
+    versionado que ManualAdSpendProvider — un admin sigue pudiendo corregir
+    manualmente un día específico después (queda como nueva versión "current",
+    auditada, sin perder el valor que vino de Meta).
+    """
+
+    def record_spend(self, db: Session, *, media_buyer_id: int, spend_date: date, amount_cents: int,
+                      actor_user_id: int, notes: str | None = None) -> AdSpend:
+        return ManualAdSpendProvider().record_spend(
+            db, media_buyer_id=media_buyer_id, spend_date=spend_date, amount_cents=amount_cents,
+            actor_user_id=actor_user_id, notes=notes or "Sincronizado automáticamente desde Meta Ads",
+        )
+
+    def sync_media_buyer_day(self, db: Session, *, media_buyer_id: int, ad_account_id: str,
+                              spend_date: date, actor_user_id: int) -> AdSpend:
+        from app.config import META_ACCESS_TOKEN, META_API_VERSION
+        from app.meta.client import get_ad_spend
+
+        amount_cents = get_ad_spend(META_ACCESS_TOKEN, META_API_VERSION, ad_account_id, spend_date)
+        return self.record_spend(
+            db, media_buyer_id=media_buyer_id, spend_date=spend_date, amount_cents=amount_cents,
+            actor_user_id=actor_user_id,
+        )
 
 
 def delete_ad_spend(db: Session, ad_spend_id: int, actor_user_id: int) -> None:
