@@ -50,15 +50,13 @@ def overview(request: Request, db: Session = Depends(get_db), user: User = Depen
         .all()
     )
 
+    # El MB solo ve su propio número final — nunca Payout/Ad Spend/Ganancia Neta/%,
+    # porque combinados permiten reconstruir cuánto gana el partner (la otra parte
+    # del reparto). El déficit sí se muestra: durante un déficit NADIE cobra
+    # (ni el MB ni el partner), así que no revela el reparto de nadie.
     waterfall = None
     if current is not None:
         waterfall = {
-            "gross_payout": money(current.gross_payout_cents),
-            "ad_spend": money(-current.ad_spend_cents),
-            "incoming_deficit": money(-current.incoming_deficit_cents),
-            "adjustment": money(current.post_settlement_adjustment_cents),
-            "net_profit": money(current.net_profit_cents),
-            "share_pct": f"{current.mb_percentage_bps_snapshot / 100:.1f}%",
             "your_earnings": money(current.mb_earnings_cents),
             "no_profit": current.net_profit_cents <= 0,
             "new_deficit": money(current.outgoing_deficit_cents),

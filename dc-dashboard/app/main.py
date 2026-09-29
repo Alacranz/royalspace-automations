@@ -53,17 +53,27 @@ def export_settlements_csv(db: Session = Depends(get_db), user: User = Depends(r
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow([
-        "media_buyer_id", "period_start", "period_end", "status", "gross_payout",
-        "ad_spend", "incoming_deficit", "net_profit", "mb_earnings", "dixon_earnings", "outgoing_deficit",
-    ])
-    for s in settlements:
+
+    if user.role == UserRole.MEDIA_BUYER:
+        # Nunca exponer payout/ad spend/ganancia neta/ganancia del partner al MB —
+        # esos números, combinados con su propia comisión, revelan cuánto gana
+        # la otra parte del reparto.
+        writer.writerow(["period_start", "period_end", "status", "your_earnings"])
+        for s in settlements:
+            writer.writerow([s.period_start, s.period_end, s.status.value, s.mb_earnings_cents / 100])
+    else:
         writer.writerow([
-            s.media_buyer_id, s.period_start, s.period_end, s.status.value,
-            s.gross_payout_cents / 100, s.ad_spend_cents / 100, s.incoming_deficit_cents / 100,
-            s.net_profit_cents / 100, s.mb_earnings_cents / 100, s.dixon_earnings_cents / 100,
-            s.outgoing_deficit_cents / 100,
+            "media_buyer_id", "period_start", "period_end", "status", "gross_payout",
+            "ad_spend", "incoming_deficit", "net_profit", "mb_earnings", "dixon_earnings", "outgoing_deficit",
         ])
+        for s in settlements:
+            writer.writerow([
+                s.media_buyer_id, s.period_start, s.period_end, s.status.value,
+                s.gross_payout_cents / 100, s.ad_spend_cents / 100, s.incoming_deficit_cents / 100,
+                s.net_profit_cents / 100, s.mb_earnings_cents / 100, s.dixon_earnings_cents / 100,
+                s.outgoing_deficit_cents / 100,
+            ])
+
     buf.seek(0)
     return StreamingResponse(buf, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=settlements.csv"})
 

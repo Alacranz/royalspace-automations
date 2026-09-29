@@ -8,30 +8,16 @@
 
   {% if waterfall is none %}
     <p class="text-gray-400">Todavía no hay datos calculados para esta semana.</p>
-  {% else %}
-    <div class="space-y-2 text-sm">
-      <div class="flex justify-between"><span class="text-gray-400">Payout Generado</span><span>{{ waterfall.gross_payout }}</span></div>
-      <div class="flex justify-between"><span class="text-gray-400">Gasto en Ads</span><span>{{ waterfall.ad_spend }}</span></div>
-      <div class="flex justify-between"><span class="text-gray-400">Déficit Anterior</span><span>{{ waterfall.incoming_deficit }}</span></div>
-      {% if waterfall.adjustment != "$0.00" %}
-      <div class="flex justify-between"><span class="text-gray-400">Ajuste</span><span>{{ waterfall.adjustment }}</span></div>
-      {% endif %}
-      <div class="border-t border-[#2d2d4e] my-2"></div>
-      <div class="flex justify-between font-medium"><span>Ganancia Neta</span><span>{{ waterfall.net_profit }}</span></div>
-      <div class="flex justify-between"><span class="text-gray-400">Tu Porcentaje</span><span>{{ waterfall.share_pct }}</span></div>
-    </div>
-
-    {% if waterfall.no_profit %}
-    <div class="mt-4 bg-yellow-900/30 border border-yellow-700 text-yellow-200 text-sm rounded p-4">
+  {% elif waterfall.no_profit %}
+    <div class="bg-yellow-900/30 border border-yellow-700 text-yellow-200 text-sm rounded p-4">
       No hay ganancia distribuible para este período. El déficit de {{ waterfall.new_deficit }} se recuperará
       de ganancias futuras antes de distribuir comisiones.
     </div>
-    {% else %}
-    <div class="mt-4 bg-green-900/30 border border-green-700 rounded p-4 text-center">
+  {% else %}
+    <div class="bg-green-900/30 border border-green-700 rounded p-4 text-center">
       <div class="text-gray-300 text-sm">TUS GANANCIAS</div>
       <div class="text-3xl font-bold text-green-400">{{ waterfall.your_earnings }}</div>
     </div>
-    {% endif %}
   {% endif %}
 </div>
 
@@ -39,18 +25,17 @@
   <h2 class="text-lg font-medium mb-4">Historial de liquidaciones</h2>
   <table class="w-full text-sm">
     <thead class="text-gray-400 text-left">
-      <tr><th class="pb-2">Semana</th><th class="pb-2">Estado</th><th class="pb-2">Ganancia Neta</th><th class="pb-2">Tus Ganancias</th></tr>
+      <tr><th class="pb-2">Semana</th><th class="pb-2">Estado</th><th class="pb-2">Tus Ganancias</th></tr>
     </thead>
     <tbody>
       {% for s in history %}
       <tr class="border-t border-[#2d2d4e]">
         <td class="py-2">{{ s.period_start.strftime("%d/%m") }} - {{ s.period_end.strftime("%d/%m") }}</td>
         <td class="py-2">{{ s.status.value }}</td>
-        <td class="py-2">{{ money(s.net_profit_cents) }}</td>
         <td class="py-2">{{ money(s.mb_earnings_cents) }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="4" class="py-4 text-gray-500 text-center">Sin liquidaciones todavía</td></tr>
+      <tr><td colspan="3" class="py-4 text-gray-500 text-center">Sin liquidaciones todavía</td></tr>
       {% endfor %}
     </tbody>
   </table>
