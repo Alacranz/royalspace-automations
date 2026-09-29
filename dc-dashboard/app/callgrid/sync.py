@@ -31,14 +31,23 @@ def sync_day(db: Session, day: date, report_timezone: str = "US/Eastern") -> Syn
 
         for sub_id, source in sources.items():
             data = remote.get(sub_id)
-            if data is None:
-                continue  # sin llamadas ese día para esa source — no es un error
-
             existing = (
                 db.query(DailyCallgridMetric)
                 .filter_by(callgrid_source_id=source.id, metric_date=day)
                 .one_or_none()
             )
+            if data is None:
+                # Sin llamadas ese día para esa source — no es un error, pero hay
+                # que dejar una fila en $0: sin ella compute_settlement toma el día
+                # como "no sincronizado" y la liquidación queda bloqueada.
+                # Nunca se pisa una fila existente con $0 (una respuesta vacía
+                # puntual de la API no debe borrar un payout real).
+                if existing is None:
+                    db.add(DailyCallgridMetric(callgrid_source_id=source.id, metric_date=day,
+                                               payout_cents=0, revenue_cents=0, raw_response={},
+                                               last_synced_at=_now(), sync_run_id=run.id))
+                continue
+
             if existing is None:
                 existing = DailyCallgridMetric(callgrid_source_id=source.id, metric_date=day, raw_response={})
                 db.add(existing)

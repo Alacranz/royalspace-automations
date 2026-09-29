@@ -23,6 +23,7 @@ from app.models import (
     CompensationRule,
     DailyCallgridMetric,
     FinancialAdjustment,
+    MediaBuyer,
     MediaBuyerSourceMapping,
     Settlement,
     SettlementLineItem,
@@ -171,7 +172,14 @@ def compute_settlement(db: Session, media_buyer_id: int, period_start: date, act
 
     before_state = _snapshot(settlement)
 
-    mapped_days = _active_source_days(db, media_buyer_id, period_start, period_end)
+    # Antes de started_on nada cuenta (ni payout, ni ad spend, ni déficit
+    # arrastrado) — la semana en la que empieza se liquida solo desde ese día.
+    started_on = db.get(MediaBuyer, media_buyer_id).started_on
+    if started_on is not None and started_on > period_end:
+        raise ValueError(f"El media buyer empieza el {started_on} — no hay nada que liquidar en {period_start}")
+    count_from = max(period_start, started_on) if started_on else period_start
+
+    mapped_days = _active_source_days(db, media_buyer_id, count_from, period_end)
     if not mapped_days:
         raise NoSourceMappingError(f"Media buyer {media_buyer_id} sin CallgridSource mapeada en {period_start}..{period_end}")
 
@@ -210,7 +218,7 @@ def compute_settlement(db: Session, media_buyer_id: int, period_start: date, act
         db.query(func.coalesce(func.sum(AdSpend.amount_cents), 0))
         .filter(
             AdSpend.media_buyer_id == media_buyer_id,
-            AdSpend.spend_date >= period_start,
+            AdSpend.spend_date >= count_from,
             AdSpend.spend_date <= period_end,
             AdSpend.is_current.is_(True),
         )
@@ -222,6 +230,8 @@ def compute_settlement(db: Session, media_buyer_id: int, period_start: date, act
         li["ad_spend_cents"] = 0  # el ad spend se registra por media buyer/día, no por source; se prorratea abajo
 
     prior = get_settlement(db, media_buyer_id, period_start - timedelta(days=7))
+    if prior is not None and started_on is not None and prior.period_end < started_on:
+        prior = None  # una semana previa a su inicio no le arrastra déficit
     incoming_deficit_cents = prior.outgoing_deficit_cents if prior else 0
 
     pending_adjustments = (

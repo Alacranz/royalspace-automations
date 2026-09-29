@@ -52,14 +52,17 @@
   <table class="w-full text-sm">
     <thead class="text-gray-400 text-left"><tr><th class="pb-2">Fecha</th><th class="pb-2">Media Buyer</th><th class="pb-2">Monto</th><th class="pb-2">Origen</th></tr></thead>
     <tbody>
-      {% set mb_names = {} %}
-      {% for mb in media_buyers %}{% set _ = mb_names.update({mb.id: mb.display_name}) %}{% endfor %}
+      {% set mb_names = {} %}{% set mb_starts = {} %}
+      {% for mb in media_buyers %}{% set _ = mb_names.update({mb.id: mb.display_name}) %}{% set _ = mb_starts.update({mb.id: mb.started_on}) %}{% endfor %}
       {% for a in recent %}
-      <tr class="border-t border-[#2d2d4e]">
+      {% set before_start = mb_starts.get(a.media_buyer_id) and a.spend_date < mb_starts.get(a.media_buyer_id) %}
+      <tr class="border-t border-[#2d2d4e] {{ 'opacity-50' if before_start }}">
         <td class="py-2">{{ a.spend_date }}</td>
         <td class="py-2">{{ mb_names.get(a.media_buyer_id, a.media_buyer_id) }}</td>
         <td class="py-2">{{ money(a.amount_cents) }}</td>
-        <td class="py-2 text-xs text-gray-500">{{ a.notes or "Manual" }}</td>
+        <td class="py-2 text-xs text-gray-500">
+          {{ a.notes or "Manual" }}{% if before_start %} · <span class="text-amber-400">antes de su inicio — no cuenta</span>{% endif %}
+        </td>
       </tr>
       {% else %}
       <tr><td colspan="4" class="py-4 text-gray-500 text-center">Sin registros todavía</td></tr>

@@ -12,6 +12,10 @@
 {% block content %}
 <h1 class="text-2xl font-semibold mb-6">Settlements</h1>
 
+{% if error %}
+<div class="bg-red-900/40 border border-red-700 text-red-200 text-sm rounded p-3 mb-4">{{ error }}</div>
+{% endif %}
+
 <div class="card rounded-lg p-6 mb-6">
   <h2 class="text-lg font-medium mb-4">Calcular liquidación</h2>
   <form method="post" action="/admin/settlements/compute" class="flex gap-4 items-end text-sm">

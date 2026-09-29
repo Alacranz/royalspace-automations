@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -123,6 +124,23 @@ def set_meta_ad_account(
     return RedirectResponse(url="/admin/media-buyers", status_code=303)
 
 
+@router.post("/media-buyers/{media_buyer_id}/started-on")
+def set_started_on(
+    media_buyer_id: int, started_on: str = Form(""),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    mb = db.get(MediaBuyer, media_buyer_id)
+    if mb is None:
+        return RedirectResponse(url="/admin/media-buyers", status_code=303)
+    before = {"started_on": str(mb.started_on) if mb.started_on else None}
+    mb.started_on = date.fromisoformat(started_on) if started_on.strip() else None
+    write_audit_log(db, actor_user_id=user.id, entity_type="media_buyer", entity_id=mb.id,
+                     action="started_on_updated", before_state=before,
+                     after_state={"started_on": str(mb.started_on) if mb.started_on else None})
+    db.commit()
+    return RedirectResponse(url="/admin/media-buyers", status_code=303)
+
+
 @router.post("/media-buyers/{media_buyer_id}/rate")
 def change_compensation_rate(
     media_buyer_id: int, mb_percentage_bps: int = Form(...),
@@ -178,13 +196,13 @@ def ad_spend_sync_meta_now(db: Session = Depends(get_db), user: User = Depends(g
 # ── Liquidaciones ─────────────────────────────────────────────────────────────
 
 @router.get("/settlements")
-def settlements_list(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def settlements_list(request: Request, error: str = "", db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     media_buyers = db.query(MediaBuyer).all()
     settlements = db.query(Settlement).order_by(Settlement.period_start.desc()).limit(50).all()
     return templates.TemplateResponse(
         request, "admin/settlements.html",
         {"user": user, "media_buyers": media_buyers, "settlements": settlements, "money": money,
-         "this_monday": _this_monday()},
+         "this_monday": _this_monday(), "error": error or None},
     )
 
 
@@ -196,9 +214,9 @@ def settlements_compute(
     error = None
     try:
         engine.compute_settlement(db, media_buyer_id, period_start, actor_user_id=user.id)
-    except engine.SettlementEngineError as exc:
+    except (engine.SettlementEngineError, ValueError) as exc:  # ValueError: no es lunes / antes de started_on
         error = str(exc)
-    return RedirectResponse(url=f"/admin/settlements{'?error=' + error if error else ''}", status_code=303)
+    return RedirectResponse(url=f"/admin/settlements{'?error=' + quote(error) if error else ''}", status_code=303)
 
 
 @router.post("/settlements/{settlement_id}/approve")

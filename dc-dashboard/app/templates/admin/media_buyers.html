@@ -45,13 +45,20 @@
   <h2 class="text-lg font-medium mb-4">Existentes</h2>
   <table class="w-full text-sm">
     <thead class="text-gray-400 text-left">
-      <tr><th class="pb-2">Nombre</th><th class="pb-2">Partner</th><th class="pb-2">Cambiar %</th><th class="pb-2">Cuenta de Meta Ads (ad spend automático)</th></tr>
+      <tr><th class="pb-2">Nombre</th><th class="pb-2">Partner</th><th class="pb-2">Fecha de inicio (antes no cuenta)</th><th class="pb-2">Cambiar %</th><th class="pb-2">Cuenta de Meta Ads (ad spend automático)</th></tr>
     </thead>
     <tbody>
       {% for mb in media_buyers %}
       <tr class="border-t border-[#2d2d4e]">
         <td class="py-2">{{ mb.display_name }}</td>
         <td class="py-2">{{ mb.partner.name }}</td>
+        <td class="py-2">
+          <form method="post" action="/admin/media-buyers/{{ mb.id }}/started-on" class="flex gap-2">
+            <input name="started_on" type="date" value="{{ mb.started_on or '' }}"
+                   class="rounded bg-[#0f0f1a] border border-[#2d2d4e] px-2 py-1">
+            <button class="btn px-3 py-1 rounded text-xs">Guardar</button>
+          </form>
+        </td>
         <td class="py-2">
           <form method="post" action="/admin/media-buyers/{{ mb.id }}/rate" class="flex gap-2">
             <input name="mb_percentage_bps" type="number" placeholder="3000" class="w-24 rounded bg-[#0f0f1a] border border-[#2d2d4e] px-2 py-1">

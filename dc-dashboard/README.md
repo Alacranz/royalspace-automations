@@ -129,6 +129,14 @@ Meta Ads. Para activar la importación automática:
 Un media buyer sin cuenta de Meta configurada sigue usando la carga manual
 sin ningún problema — ambos métodos conviven (`app/services/ad_spend.py`).
 
+## Fecha de inicio del media buyer
+
+`/admin/media-buyers` → "Fecha de inicio". Antes de esa fecha nada cuenta en
+sus liquidaciones: ni payout, ni ad spend (ej. gasto de pruebas en su cuenta
+de Meta), ni déficit arrastrado de una semana anterior; el sync de Meta
+tampoco importa esos días. La semana en la que empieza se liquida solo desde
+ese día. DC1 empieza el 2026-10-01 (lo setea la migración `c3d51e7a9b20`).
+
 ## Estructura
 
 Ver el árbol completo y el detalle del schema/motor de liquidaciones en el

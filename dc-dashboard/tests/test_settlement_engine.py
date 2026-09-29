@@ -347,3 +347,58 @@ def test_current_deficit_reads_latest_finalized_settlement(db, mb1, source1, map
     mark_paid(db, s.id, actor_user_id=1)
     lock_settlement(db, s.id, actor_user_id=1)
     assert get_current_deficit_cents(db, mb1.id) == 3000
+
+
+# ── started_on — nada antes del primer día del media buyer cuenta ─────────────
+
+def test_ad_spend_before_started_on_is_ignored(db, mb1, source1, mapping1, rule_30):
+    """DC1 empieza un miércoles: el gasto de lunes/martes (pruebas en su cuenta)
+    no es suyo y no le genera déficit; solo miércoles-domingo cuenta."""
+    from tests.conftest import add_ad_spend
+
+    wednesday = MONDAY + timedelta(days=2)
+    mb1.started_on = wednesday
+    db.commit()
+
+    for i in range(7):
+        d = MONDAY + timedelta(days=i)
+        add_daily_metric(db, source1, d, 7000 if d == wednesday else 0)
+        add_ad_spend(db, mb1, d, 5000 if d < wednesday else (2000 if d == wednesday else 0))
+
+    s = compute_settlement(db, mb1.id, MONDAY, actor_user_id=1)
+    assert s.ad_spend_cents == 2000            # los $100 de lunes/martes no cuentan
+    assert s.net_profit_cents == 5000          # $70 - $20
+    assert (s.mb_earnings_cents, s.dixon_earnings_cents) == (1500, 3500)
+
+
+def test_days_before_started_on_do_not_block_as_missing(db, mb1, source1, mapping1, rule_30):
+    wednesday = MONDAY + timedelta(days=2)
+    mb1.started_on = wednesday
+    db.commit()
+    for i in range(2, 7):  # sin métricas para lunes/martes
+        add_daily_metric(db, source1, MONDAY + timedelta(days=i), 0)
+
+    s = compute_settlement(db, mb1.id, MONDAY, actor_user_id=1)
+    assert s.status == SettlementStatus.READY
+    assert s.outgoing_deficit_cents == 0
+
+
+def test_no_deficit_carried_from_week_before_started_on(db, mb1, source1, mapping1, rule_30):
+    fill_week(db, source1, mb1, MONDAY, total_payout_cents=0, total_ad_spend_cents=1437)
+    s0 = compute_settlement(db, mb1.id, MONDAY, actor_user_id=1)
+    assert s0.outgoing_deficit_cents == 1437
+
+    week2 = MONDAY + timedelta(days=7)
+    mb1.started_on = week2 + timedelta(days=2)
+    db.commit()
+    fill_week(db, source1, mb1, week2, total_payout_cents=0, total_ad_spend_cents=0)
+    add_daily_metric(db, source1, week2 + timedelta(days=7), 0)  # no molesta
+    s1 = compute_settlement(db, mb1.id, week2, actor_user_id=1)
+    assert s1.incoming_deficit_cents == 0
+
+
+def test_week_entirely_before_started_on_is_rejected(db, mb1, source1, mapping1, rule_30):
+    mb1.started_on = MONDAY + timedelta(days=7)
+    db.commit()
+    with pytest.raises(ValueError):
+        compute_settlement(db, mb1.id, MONDAY, actor_user_id=1)

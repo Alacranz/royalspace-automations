@@ -115,6 +115,11 @@ class MediaBuyer(Base):
     # MetaAdSpendProvider. NULL = sigue siendo carga manual.
     meta_ad_account_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Primer día que trabaja. Payout y ad spend anteriores NO cuentan en sus
+    # liquidaciones (ej. gasto de pruebas en la cuenta antes de que empezara),
+    # y el sync de Meta no importa días anteriores. NULL = sin restricción.
+    started_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+
     partner: Mapped["Partner"] = relationship(back_populates="media_buyers")
 
 

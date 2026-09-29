@@ -27,6 +27,8 @@ def sync_day(db: Session, day: date) -> dict:
 
     synced, errors = 0, []
     for mb in media_buyers:
+        if mb.started_on is not None and day < mb.started_on:
+            continue  # gasto previo a su inicio no es suyo — no se importa
         try:
             provider.sync_media_buyer_day(
                 db, media_buyer_id=mb.id, ad_account_id=mb.meta_ad_account_id,
