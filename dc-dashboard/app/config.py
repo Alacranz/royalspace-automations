@@ -8,8 +8,23 @@ from __future__ import annotations
 
 import os
 
-CALLGRID_API_KEY = os.environ["CALLGRID_API_KEY"]
-CALLGRID_ORG_ID  = os.environ["CALLGRID_ORG_ID"]
+
+def _require_latin1(name: str, value: str) -> str:
+    """CALLGRID_API_KEY/ORG_ID viajan en headers HTTP (latin-1 estricto). Fallar
+    acá con un mensaje claro evita el UnicodeEncodeError críptico que sale si
+    el valor quedó truncado al copiarlo (ej. con '…' en vez del texto completo)."""
+    try:
+        value.encode("latin-1")
+    except UnicodeEncodeError as exc:
+        raise ValueError(
+            f"{name} contiene un carácter inválido ({value[exc.start:exc.end]!r}) — "
+            f"revisa que lo hayas copiado completo, no una versión truncada/visual."
+        ) from exc
+    return value
+
+
+CALLGRID_API_KEY = _require_latin1("CALLGRID_API_KEY", os.environ["CALLGRID_API_KEY"])
+CALLGRID_ORG_ID  = _require_latin1("CALLGRID_ORG_ID", os.environ["CALLGRID_ORG_ID"])
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 

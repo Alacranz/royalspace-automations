@@ -20,7 +20,27 @@ API_KEY = os.environ["CALLGRID_API_KEY"]
 ORG_ID = os.environ["CALLGRID_ORG_ID"]
 
 
+def _check_ascii(name: str, value: str) -> None:
+    """CALLGRID_API_KEY/ORG_ID viajan en headers HTTP (latin-1 estricto). Un
+    error de codificación acá casi siempre significa que copiaste una versión
+    truncada del valor (ej. con "…" en vez del texto completo), no un problema
+    real de la API."""
+    try:
+        value.encode("latin-1")
+    except UnicodeEncodeError as exc:
+        bad_char = value[exc.start:exc.end]
+        print(f"ERROR: {name} contiene un carácter inválido ({bad_char!r}) en la posición {exc.start}.")
+        print(f"  Valor actual: {value!r}")
+        print("  Esto casi siempre pasa por copiar una versión truncada/visual del valor")
+        print("  (ej. con '…' en vez del texto completo). Vuelve a copiarlo usando el botón")
+        print("  de 'copiar' de CallGrid, no seleccionando el texto mostrado en pantalla.")
+        sys.exit(1)
+
+
 def main() -> None:
+    _check_ascii("CALLGRID_API_KEY", API_KEY)
+    _check_ascii("CALLGRID_ORG_ID", ORG_ID)
+
     end = date.today()
     start = end - timedelta(days=7)
 
