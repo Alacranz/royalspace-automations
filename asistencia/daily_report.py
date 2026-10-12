@@ -8,6 +8,7 @@ Lógica replicada exactamente:
   - Primera marca por persona (la más temprana)
   - Clasificación: A TIEMPO 07:00-09:15 (09:10 desde 2026-09-30) | TARDE resto
     de la hora hasta 11:00 | FUERA DE RANGO el resto — ver on_time_end_for()
+  - Sábados: solo SATURDAY_WORKERS (Clara y Edixon desde 2026-10-17)
   - Delta en minutos respecto a 09:00 (floor, sin segundos)
   - Corte de paginación por createdAt < inicio del día
   - Empate UTC/local → prefiere hora directa (sin convertir)
@@ -62,6 +63,17 @@ def late_start_for(d: date) -> tuple[int, int]:
     end = on_time_end_for(d)
     return (end[0], end[1] + 1)
 
+# Sábados: solo Clara y Edixon Cordova, desde el 2026-10-17 (decisión
+# 2026-10-12; entre 2026-08-01 y esa fecha nadie trabajaba sábados).
+# Substring match sobre preferredName en minúsculas.
+SATURDAY_WORKERS = {"clara", "edixon", "cordova"}
+_SATURDAY_WORKERS_SINCE = date(2026, 10, 17)
+
+
+def saturday_workers_for(d: date) -> set[str]:
+    return SATURDAY_WORKERS if d >= _SATURDAY_WORKERS_SINCE else set()
+
+
 # Excluidos (preferredName, minúsculas)
 EXCLUDE_NAMES = {"edwar"}
 
@@ -111,9 +123,9 @@ def main() -> None:
     print("Token OK")
 
     is_saturday = now_caracas.weekday() == 5
+    saturday_workers = saturday_workers_for(now_caracas.date())
 
-    # Nadie trabaja sábados desde 2026-08-01
-    if is_saturday:
+    if is_saturday and not saturday_workers:
         print("Sábado — no hay reporte de asistencia.")
         return
 
@@ -122,8 +134,13 @@ def main() -> None:
         if p.get("status") == "Joined"
         and (p.get("preferredName") or "").strip().lower() not in EXCLUDE_NAMES
     ]
-    people = all_people
-    print(f"Personas activas: {len(people)}")
+    # Sábados: solo quienes trabajan ese día
+    people = [
+        p for p in all_people
+        if not is_saturday
+        or any(kw in (p.get("preferredName") or "").strip().lower() for kw in saturday_workers)
+    ]
+    print(f"Personas activas: {len(people)}{' (sábado — solo Clara y Edixon)' if is_saturday else ''}")
 
     # personId → primera marca "In" del día (datetime VET)
     first_in: dict[str, datetime] = {}

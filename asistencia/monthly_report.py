@@ -9,7 +9,9 @@ Lógica replicada exactamente:
   - Paginación por `time desc`, corte cuando time < inicio del mes
   - Primera marca "In" por persona por día
   - Scoring: A TIEMPO=0 | TARDE=-1.5 | FUERA DE RANGO=-2 | SIN MARCAR=-2
-  - Fines de semana omitidos (columna vacía, no penaliza)
+  - Fines de semana omitidos (columna vacía, no penaliza), salvo sábados de
+    SATURDAY_WORKERS (Clara y Edixon desde 2026-10-17)
+  - A TIEMPO hasta 9:15 (9:10 desde 2026-09-30) — ver on_time_end_for()
   - Empate UTC/local → prefiere UTC→Caracas (igual que el .ps1 mensual)
   - Excel con colores, freeze, negrita, bordes, fórmula SUM
   - Adjunta el .xlsx al mensaje de Discord
@@ -22,7 +24,7 @@ import json
 import os
 import sys
 from calendar import monthrange
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import requests
 import openpyxl
@@ -66,9 +68,16 @@ _SISTEMA_DATOS_ORDER = [
     "Clara", "Cordova", "Sebastian", "Caribay",
 ]
 
-ON_TIME_END = (9, 15)
-LATE_START  = (9, 16)
 LATE_END    = (11, 0)
+
+# Mismo corte que daily_report.py: "A TIEMPO" hasta 9:15, y hasta 9:10 desde
+# 2026-09-30 — atado a la fecha de cada marca, no a la fecha de ejecución,
+# para que reprocesar un mes anterior siga usando la regla de ese momento.
+_ON_TIME_TIGHTEN_DATE = date(2026, 9, 30)
+
+
+def on_time_end_for(d: date) -> tuple[int, int]:
+    return (9, 10) if d >= _ON_TIME_TIGHTEN_DATE else (9, 15)
 
 POINTS = {
     "ONTIME":   0.0,
@@ -79,8 +88,16 @@ POINTS = {
 
 COUNT_WEEKENDS = False
 
-# Nadie trabaja sábados desde 2026-08-01
-SATURDAY_WORKERS: set[str] = set()
+# Sábados: solo Clara y Edixon Cordova, desde el 2026-10-17 (decisión
+# 2026-10-12; entre 2026-08-01 y esa fecha nadie trabajaba sábados — por eso la
+# fecha: reprocesar agosto/septiembre no debe marcarles MISSING esos sábados).
+SATURDAY_WORKERS = {"clara", "edixon", "cordova"}
+_SATURDAY_WORKERS_SINCE = date(2026, 10, 17)
+
+# Hasta 2026-08-01 Clara tenía L-V flexible (solo penalizaba MISSING) por
+# trabajar sábados. No se reactivó junto con los sábados el 2026-10-12 —
+# agregar acá a quien deba tenerlo.
+FLEX_WEEKDAY_WORKERS: set[str] = set()
 
 EXCLUDE_NAMES = {"edwar", "angela vanesa", "sebastian reyes", "angelica flores"}
 
@@ -126,11 +143,12 @@ def send_discord_with_file(title: str, body: str, file_bytes: bytes, filename: s
     ).raise_for_status()
 
 
-def classify(hour: int, minute: int) -> str:
+def classify(hour: int, minute: int, d: date) -> str:
     t = (hour, minute)
-    if t <= ON_TIME_END:
+    on_time_end = on_time_end_for(d)
+    if t <= on_time_end:
         return "ONTIME"
-    if LATE_START <= t <= LATE_END:
+    if t <= LATE_END:
         return "LATE"
     return "OUT"
 
@@ -141,6 +159,8 @@ def is_workday(d: datetime, person_name: str = "") -> bool:
     if wd < 5:
         return True
     if wd == 5:  # Sábado
+        if d.date() < _SATURDAY_WORKERS_SINCE:
+            return False
         low = person_name.strip().lower()
         return any(kw in low for kw in SATURDAY_WORKERS)
     return False  # Domingo
@@ -149,12 +169,11 @@ def is_workday(d: datetime, person_name: str = "") -> bool:
 def get_points(state: str, person_name: str, d: datetime) -> float:
     """
     Penalización según estado, persona y día de la semana.
-    Clara L-V: flexible — solo penaliza por ausencia total (MISSING).
-               LATE y OUT no penalizan (horario diferente).
-    Clara Sábado y todos los demás: scoring estándar.
+    FLEX_WEEKDAY_WORKERS L-V: solo penaliza ausencia total (MISSING).
+    Sábados y todos los demás: scoring estándar.
     """
     low = person_name.strip().lower()
-    if any(kw in low for kw in SATURDAY_WORKERS) and d.weekday() < 5:
+    if any(kw in low for kw in FLEX_WEEKDAY_WORKERS) and d.weekday() < 5:
         return POINTS["MISSING"] if state == "MISSING" else 0.0
     return POINTS.get(state, 0.0)
 
@@ -318,7 +337,7 @@ def main() -> None:
                 continue
             if d in first_in.get(pid, {}):
                 cin   = first_in[pid][d]
-                state = classify(cin.hour, cin.minute)
+                state = classify(cin.hour, cin.minute, date(year, month, d))
             else:
                 state = "MISSING"
             states[pid][d] = state
