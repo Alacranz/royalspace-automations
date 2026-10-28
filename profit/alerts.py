@@ -33,6 +33,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 from common.discord_client import send as discord_send
 from common.meta_client    import get_adset_insights, get_group_ad_account_ids
 from common.ringba_client  import get_publisher_summary, normalize_name
+from common.callgrid_client import (
+    get_publisher_summary as get_callgrid_summary,
+    merge_publisher_maps,
+)
 
 # ── Timezone ──────────────────────────────────────────────────────────────────
 VET = pytz.timezone("America/Caracas")   # UTC-4, sin DST
@@ -48,6 +52,12 @@ WEBHOOK_EXTERNAL = os.environ["DISCORD_WEBHOOK_ALERTS_EXTERNAL"]
 # Canal exclusivo del grupo privado (Angela) — 2026-10-28. Sin el secret,
 # sus alertas siguen cayendo en #mod como antes.
 WEBHOOK_PRIVATE  = os.environ.get("DISCORD_WEBHOOK_ALERTS_PRIVATE") or WEBHOOK_MOD
+# CallGrid (migración desde Ringba) — opcional: sin esto, solo Ringba.
+CALLGRID_API_KEY = os.environ.get("CALLGRID_API_KEY", "")
+CALLGRID_ORG_ID  = os.environ.get("CALLGRID_ORG_ID", "")
+# workflow_dispatch con coverage_report=true → solo manda a #mod el reporte de
+# cobertura por MB (Ringba vs CallGrid hoy), sin evaluar alertas.
+COVERAGE_REPORT  = (os.environ.get("COVERAGE_REPORT") or "").lower() == "true"
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
 CONFIG_PATH = Path(__file__).parent / "config.json"
@@ -82,6 +92,14 @@ MIN_INCOMING  = 10     # Llamadas mínimas en la hora para alertar
 # ── Horarios VET ──────────────────────────────────────────────────────────────
 META_ALERT_HOUR_MIN   = 10   # No alertar antes de 10 AM VET
 RINGBA_ALERT_HOUR_MIN = 6    # No alertar entre 12am y 6am VET
+
+# Ventana de llamadas a evaluar: desde la corrida anterior, entre 1h y 3h.
+# GitHub descarta muchos triggers `schedule:` (confirmado 2026-10-28: 3-7
+# corridas/día en vez de 24) — con una ventana fija de 1h se ignoraba la
+# mayoría de las llamadas entre corridas.
+CALLS_WINDOW_MIN_H = 1.0
+CALLS_WINDOW_MAX_H = 3.0
+ET = pytz.timezone("America/New_York")   # día de reporte de CallGrid
 
 # ── Anti-spam ─────────────────────────────────────────────────────────────────
 ALERT_REPEAT_HOURS = 2.0    # Repetir alerta si problema persiste N horas
@@ -386,34 +404,106 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
 # RINGBA — ALERTAS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: datetime) -> None:
-    """Procesa alertas de Ringba por publisher (última hora)."""
-    hour = now_vet.hour
-    if 0 <= hour < RINGBA_ALERT_HOUR_MIN:
-        print(f"[Ringba] {hour:02d}:xx VET — madrugada, sin alertas Ringba.")
-        return
-
-    start_utc = now_utc - timedelta(hours=1)
-    end_utc   = now_utc
-    print(f"[Ringba] Última hora: {start_utc.strftime('%H:%M')}–{end_utc.strftime('%H:%M')} UTC...")
-
-    try:
-        pub_map = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
-    except Exception as e:
-        print(f"[Ringba] ERROR: {e}")
-        return
-
-    # Mapa: normalized_publisher_name → mb_config
+def build_publisher_map(config: dict) -> dict[str, dict]:
+    """normalized_publisher_name → mb_config (MBs activos + grupos privados)."""
     pub_to_mb: dict[str, dict] = {}
     for mb in config.get("media_buyers") or []:
+        if mb.get("active", True) is False:
+            continue
         key = normalize_name(str(mb.get("publisher_name") or ""))
         if key:
             pub_to_mb[key] = mb
     for group in config.get("accounts_private_groups") or []:
+        if group.get("active", True) is False:
+            continue
         for pub in group.get("publishers") or []:
             key = normalize_name(str(pub))
             if key:
                 pub_to_mb[key] = {"display_name": pub, "category": "private"}
+    return pub_to_mb
+
+
+def fetch_callgrid_delta(state: dict, now_utc: datetime) -> dict[str, dict]:
+    """
+    CallGrid solo entrega totales por DÍA (sin hora). Se pide el acumulado de
+    hoy (ET) y se resta el acumulado guardado en la corrida anterior del mismo
+    día → llamadas nuevas desde entonces. Sin base del mismo día (primera
+    corrida del día), el delta es el acumulado desde medianoche ET.
+    Si CallGrid falla se devuelve {} y NO se toca la base guardada.
+    """
+    if not (CALLGRID_API_KEY and CALLGRID_ORG_ID):
+        print("[CallGrid] Sin credenciales — solo Ringba.")
+        return {}
+
+    today_et = now_utc.astimezone(ET).date()
+    try:
+        totals = get_callgrid_summary(CALLGRID_API_KEY, CALLGRID_ORG_ID, today_et, today_et)
+    except Exception as e:
+        print(f"[CallGrid] ERROR (solo Ringba esta corrida): {e}")
+        return {}
+
+    fields = ("calls", "connected", "conversions")
+    cg_state = state.get("callgrid") or {}
+    prev = cg_state.get("totals", {}) if cg_state.get("date") == today_et.isoformat() else {}
+    if not prev:
+        print("[CallGrid] Sin base de hoy — se usa el acumulado desde medianoche ET.")
+
+    delta: dict[str, dict] = {}
+    for key, cur in totals.items():
+        before = prev.get(key, {})
+        d = {f: max(0, int(cur.get(f, 0)) - int(before.get(f, 0))) for f in fields}
+        if d["calls"] > 0:
+            delta[key] = {"raw": cur.get("raw", key), **d}
+
+    state["callgrid"] = {
+        "date":   today_et.isoformat(),
+        "totals": {k: {f: int(v.get(f, 0)) for f in fields} for k, v in totals.items()},
+    }
+    print(f"[CallGrid] Publishers con llamadas nuevas: {len(delta)}")
+    return delta
+
+
+def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: datetime) -> None:
+    """Alertas de calidad de llamadas por publisher — Ringba + CallGrid combinados."""
+    hour = now_vet.hour
+    if 0 <= hour < RINGBA_ALERT_HOUR_MIN:
+        print(f"[Llamadas] {hour:02d}:xx VET — madrugada, sin alertas de llamadas.")
+        return
+
+    last_ts = float(state.get("calls_last_run_ts") or 0)
+    hours   = (now_utc.timestamp() - last_ts) / 3600 if last_ts else CALLS_WINDOW_MIN_H
+    hours   = min(CALLS_WINDOW_MAX_H, max(CALLS_WINDOW_MIN_H, hours))
+    start_utc = now_utc - timedelta(hours=hours)
+    end_utc   = now_utc
+    print(f"[Ringba] Ventana {hours:.1f}h: {start_utc.strftime('%H:%M')}–{end_utc.strftime('%H:%M')} UTC...")
+
+    try:
+        ringba_map = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, end_utc)
+    except Exception as e:
+        print(f"[Ringba] ERROR: {e}")
+        ringba_map = None
+
+    callgrid_map = fetch_callgrid_delta(state, now_utc)
+    if ringba_map is None and not callgrid_map:
+        print("[Llamadas] Sin datos de Ringba ni CallGrid — se omite esta corrida.")
+        return
+
+    pub_map = merge_publisher_maps(ringba_map or {}, callgrid_map)
+    state["calls_last_run_ts"] = now_utc.timestamp()
+    window_label = f"ultimas {hours:.0f}h" if hours >= 1.5 else "ultima hora"
+
+    pub_to_mb = build_publisher_map(config)
+
+    # Cobertura: cada MB con sus llamadas por fuente, y publishers con
+    # llamadas que no corresponden a ningún MB (nombre distinto en config).
+    for key, mb in pub_to_mb.items():
+        r = (ringba_map or {}).get(key, {}).get("calls", 0)
+        c = callgrid_map.get(key, {}).get("calls", 0)
+        print(f"  [Cobertura] {mb.get('display_name', key):<22} Ringba {r:>4}  CallGrid {c:>4}")
+    unmatched = sorted(k for k in pub_map if k not in pub_to_mb and pub_map[k].get("calls", 0) > 0)
+    if unmatched:
+        print(f"  [Cobertura] Publishers con llamadas SIN MB en config: "
+              + ", ".join(f"{pub_map[k].get('raw', k)} ({pub_map[k]['calls']})" for k in unmatched))
 
     ringba_state = state.setdefault("ringba", {})
 
@@ -460,9 +550,10 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
                 # Publishers privados (You, Angela) → su canal (o #mod) con todos los datos
                 msg = "\n".join([
                     "```",
-                    "⚠ RINGBA ALERTA",
+                    "⚠ ALERTA LLAMADAS (Ringba + CallGrid)",
                     "",
                     f"Publisher   : {mb_name}",
+                    f"Periodo     : {window_label}",
                     f"Llamadas    : Incoming {incoming}  Connected {connected}  Converted {converted}",
                     f"Conn Rate  {conn_flag}: {conn_rate:.1f}%  (minimo {CONN_RATE_MIN:.0f}%)",
                     f"Conv Rate  {conv_flag}: {conv_rate:.1f}%  (minimo {CONV_RATE_MIN:.0f}%)",
@@ -483,6 +574,7 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
                     "```",
                     "⚠ ALERTA DE RENDIMIENTO",
                     "",
+                    f"Periodo      : {window_label}",
                     f"Llamadas     : Entrantes {incoming}  Conectadas {connected}  Convertidas {converted}",
                     f"Conn Rate  {conn_flag}: {conn_rate:.1f}%   (minimo {CONN_RATE_MIN:.0f}%)",
                     f"Conv Rate  {conv_flag}: {conv_rate:.1f}%   (minimo {CONV_RATE_MIN:.0f}%)",
@@ -534,6 +626,67 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
 
+def run_coverage_report(config: dict, now_utc: datetime) -> None:
+    """
+    Reporte manual a #mod: llamadas de HOY (desde medianoche ET) por MB en
+    Ringba y CallGrid, más publishers con llamadas que no matchean ningún MB
+    del config (nombre distinto en Ringba/CallGrid → sus alertas no salen).
+    No toca el estado anti-spam.
+    """
+    today_et  = now_utc.astimezone(ET).date()
+    start_utc = ET.localize(datetime(today_et.year, today_et.month, today_et.day)).astimezone(timezone.utc)
+
+    try:
+        ringba = get_publisher_summary(RINGBA_TOKEN, RINGBA_ACCOUNT, start_utc, now_utc)
+        ringba_err = ""
+    except Exception as e:
+        ringba, ringba_err = {}, str(e)[:80]
+    callgrid, callgrid_err = {}, ""
+    if CALLGRID_API_KEY and CALLGRID_ORG_ID:
+        try:
+            callgrid = get_callgrid_summary(CALLGRID_API_KEY, CALLGRID_ORG_ID, today_et, today_et)
+        except Exception as e:
+            callgrid_err = str(e)[:80]
+    else:
+        callgrid_err = "sin credenciales"
+
+    pub_to_mb = build_publisher_map(config)
+    lines = [
+        "```",
+        f"COBERTURA ALERTAS — hoy {today_et.strftime('%d/%m')} (ET)",
+        "",
+        f"{'MB':<22}{'Ringba':>8}{'CallGrid':>10}",
+    ]
+    for key, mb in pub_to_mb.items():
+        r = ringba.get(key, {}).get("calls", 0)
+        c = callgrid.get(key, {}).get("calls", 0)
+        flag = "  <- sin llamadas" if r == 0 and c == 0 else ""
+        lines.append(f"{mb.get('display_name', key)[:21]:<22}{r:>8}{c:>10}{flag}")
+    if ringba_err:
+        lines.append(f"\nRingba ERROR: {ringba_err}")
+    if callgrid_err:
+        lines.append(f"CallGrid: {callgrid_err}")
+
+    unmatched = [
+        (src, v.get("raw", k), v.get("calls", 0))
+        for src, m in (("Ringba", ringba), ("CallGrid", callgrid))
+        for k, v in m.items() if k not in pub_to_mb and v.get("calls", 0) > 0
+    ]
+    lines.append("")
+    if unmatched:
+        lines.append("Publishers con llamadas SIN MB en config:")
+        lines += [f"  {src:<8} {raw[:40]} ({calls})" for src, raw, calls in sorted(unmatched)]
+    else:
+        lines.append("Todos los publishers con llamadas tienen MB asignado.")
+    lines.append("```")
+
+    msg = "\n".join(lines)
+    if len(msg) > 1900:
+        msg = msg[:1890] + "\n...```"
+    discord_send(WEBHOOK_MOD, msg)
+    print(msg)
+
+
 def main() -> None:
     now_utc = datetime.now(timezone.utc)
     now_vet = now_utc.astimezone(VET)
@@ -541,6 +694,10 @@ def main() -> None:
 
     with open(CONFIG_PATH, encoding="utf-8") as f:
         config = json.load(f)
+
+    if COVERAGE_REPORT:
+        run_coverage_report(config, now_utc)
+        return
 
     state = load_state()
 

@@ -9,12 +9,21 @@ name: Profit — Alertas Inteligentes
 #   MBs externos  → DISCORD_WEBHOOK_ALERTS_EXTERNAL  (#mb-alerts externos)
 #   Grupo privado → DISCORD_WEBHOOK_ALERTS_PRIVATE   (canal de Angela; fallback #mod)
 #
+# Llamadas = Ringba (ventana desde la corrida anterior, 1-3h) + CallGrid
+# (acumulado de hoy menos el de la corrida anterior — su API no da horas).
+# Run workflow con coverage_report=true → reporte por MB a #mod.
+#
 # El estado anti-spam se persiste entre runs via GitHub Actions cache.
 
 on:
   schedule:
     - cron: "0 * * * *"   # cada hora en punto (:00)
   workflow_dispatch:
+    inputs:
+      coverage_report:
+        description: "Solo enviar a #mod el reporte de cobertura por MB (Ringba vs CallGrid hoy), sin alertas"
+        type: boolean
+        default: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -58,6 +67,9 @@ jobs:
           DISCORD_WEBHOOK_ALERTS_EXTERNAL:  ${{ secrets.DISCORD_WEBHOOK_ALERTS_EXTERNAL }}
           DISCORD_WEBHOOK_ALERTS_PRIVATE:   ${{ secrets.DISCORD_WEBHOOK_ALERTS_PRIVATE }}
           DISCORD_WEBHOOKS_MB_JSON:         ${{ secrets.DISCORD_WEBHOOKS_MB_JSON }}
+          CALLGRID_API_KEY:                 ${{ secrets.CALLGRID_API_KEY }}
+          CALLGRID_ORG_ID:                  ${{ secrets.CALLGRID_ORG_ID }}
+          COVERAGE_REPORT:                  ${{ github.event.inputs.coverage_report || 'false' }}
 
       - name: Guardar estado de alertas
         if: always()
