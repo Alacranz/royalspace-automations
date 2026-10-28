@@ -15,8 +15,8 @@ Routing de webhooks:
     → DISCORD_WEBHOOK_ALERTS_INTERNAL
   MBs externos (Caribay, Sebastian)
     → DISCORD_WEBHOOK_ALERTS_EXTERNAL
-  Publishers propios de RS (You, Angela) y Ringba
-    → DISCORD_WEBHOOK_MOD
+  Grupo privado (You, Angela) — Meta y Ringba
+    → DISCORD_WEBHOOK_ALERTS_PRIVATE (canal de Angela); si no está, DISCORD_WEBHOOK_MOD
 """
 from __future__ import annotations
 
@@ -45,6 +45,9 @@ META_VERSION     = os.environ.get("META_API_VERSION") or "v25.0"
 WEBHOOK_MOD      = os.environ["DISCORD_WEBHOOK_MOD"]
 WEBHOOK_INTERNAL = os.environ["DISCORD_WEBHOOK_ALERTS_INTERNAL"]
 WEBHOOK_EXTERNAL = os.environ["DISCORD_WEBHOOK_ALERTS_EXTERNAL"]
+# Canal exclusivo del grupo privado (Angela) — 2026-10-28. Sin el secret,
+# sus alertas siguen cayendo en #mod como antes.
+WEBHOOK_PRIVATE  = os.environ.get("DISCORD_WEBHOOK_ALERTS_PRIVATE") or WEBHOOK_MOD
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
 CONFIG_PATH = Path(__file__).parent / "config.json"
@@ -184,7 +187,9 @@ def webhook_for(mb: dict) -> str:
         return WEBHOOK_INTERNAL
     if cat == "external":
         return WEBHOOK_EXTERNAL
-    return WEBHOOK_MOD   # private / desconocido → #mod
+    if cat == "private":
+        return WEBHOOK_PRIVATE   # canal de Angela (o #mod si no está configurado)
+    return WEBHOOK_MOD   # desconocido → #mod
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -269,7 +274,8 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
         if ad_id:
             account_map[ad_id] = mb
 
-    # Grupos privados → #mod (un grupo puede tener varias cuentas de Meta)
+    # Grupos privados → canal privado de Angela, o #mod si no está configurado
+    # (un grupo puede tener varias cuentas de Meta)
     for group in config.get("accounts_private_groups") or []:
         for ad_id in get_group_ad_account_ids(group):
             if ad_id:
@@ -450,8 +456,8 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
             conv_flag = "!" if conv_dec in ("ALERT", "REPEAT", "WORSENED") else " "
             hook_mb   = webhook_for(mb)
 
-            if hook_mb == WEBHOOK_MOD:
-                # Publishers privados (You, Angela) → #mod con todos los datos
+            if hook_mb in (WEBHOOK_MOD, WEBHOOK_PRIVATE):
+                # Publishers privados (You, Angela) → su canal (o #mod) con todos los datos
                 msg = "\n".join([
                     "```",
                     "⚠ RINGBA ALERTA",
@@ -465,10 +471,10 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
                     "```",
                 ])
                 try:
-                    discord_send(WEBHOOK_MOD, msg)
-                    print(f"  → Alerta Ringba enviada a #mod")
+                    discord_send(hook_mb, msg)
+                    print(f"  → Alerta Ringba enviada al canal privado")
                 except Exception as e:
-                    print(f"  → ERROR enviando a #mod: {e}")
+                    print(f"  → ERROR enviando al canal privado: {e}")
             else:
                 # MBs internos/externos → solo al canal del MB, sin datos financieros
                 discord_uid = mb.get("discord_user_id", "")
@@ -506,8 +512,8 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
                 mark_recovery(s_conv)
 
             hook_mb = webhook_for(mb)
-            if hook_mb == WEBHOOK_MOD:
-                # Publishers privados → #mod
+            if hook_mb in (WEBHOOK_MOD, WEBHOOK_PRIVATE):
+                # Publishers privados → su canal (o #mod)
                 msg = "\n".join([
                     "```",
                     f"RECUPERADO — {mb_name}",
@@ -515,10 +521,10 @@ def run_ringba_alerts(config: dict, state: dict, now_utc: datetime, now_vet: dat
                     "```",
                 ])
                 try:
-                    discord_send(WEBHOOK_MOD, msg)
-                    print(f"  → Recuperación enviada a #mod")
+                    discord_send(hook_mb, msg)
+                    print(f"  → Recuperación enviada al canal privado")
                 except Exception as e:
-                    print(f"  → ERROR enviando recuperación a #mod: {e}")
+                    print(f"  → ERROR enviando recuperación al canal privado: {e}")
             else:
                 # MBs internos/externos → silencioso, solo actualizar estado
                 print(f"  → [{mb_name}] Recuperado — estado actualizado, sin notificacion al canal")

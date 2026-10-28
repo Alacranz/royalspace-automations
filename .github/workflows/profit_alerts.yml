@@ -7,7 +7,7 @@ name: Profit — Alertas Inteligentes
 # Envía alertas individuales a Discord:
 #   MBs internos  → DISCORD_WEBHOOK_ALERTS_INTERNAL  (#mb-alerts internos)
 #   MBs externos  → DISCORD_WEBHOOK_ALERTS_EXTERNAL  (#mb-alerts externos)
-#   Ringba / RS   → DISCORD_WEBHOOK_MOD              (#mod)
+#   Grupo privado → DISCORD_WEBHOOK_ALERTS_PRIVATE   (canal de Angela; fallback #mod)
 #
 # El estado anti-spam se persiste entre runs via GitHub Actions cache.
 
@@ -56,6 +56,7 @@ jobs:
           DISCORD_WEBHOOK_MOD:              ${{ secrets.DISCORD_WEBHOOK_MOD }}
           DISCORD_WEBHOOK_ALERTS_INTERNAL:  ${{ secrets.DISCORD_WEBHOOK_ALERTS_INTERNAL }}
           DISCORD_WEBHOOK_ALERTS_EXTERNAL:  ${{ secrets.DISCORD_WEBHOOK_ALERTS_EXTERNAL }}
+          DISCORD_WEBHOOK_ALERTS_PRIVATE:   ${{ secrets.DISCORD_WEBHOOK_ALERTS_PRIVATE }}
           DISCORD_WEBHOOKS_MB_JSON:         ${{ secrets.DISCORD_WEBHOOKS_MB_JSON }}
 
       - name: Guardar estado de alertas
