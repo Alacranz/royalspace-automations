@@ -12,8 +12,12 @@ import requests
 WEBHOOK_URL        = os.environ["DISCORD_WEBHOOK_MOD"]
 _raw_stats_url     = os.environ["WEBHOOK_STATS_URL"]
 WEBHOOK_STATS_URL  = _raw_stats_url if _raw_stats_url.startswith("http") else f"https://{_raw_stats_url}"
+STATS_API_KEY      = os.environ.get("STATS_API_KEY", "")   # /stats exige X-Api-Key desde c79a1f7
 RAILWAY_TOKEN      = os.environ.get("RAILWAY_TOKEN", "")
-ANTHROPIC_BALANCE  = float(os.environ.get("ANTHROPIC_BALANCE") or "50.20")
+# Workspace "Alacranz's Projects" (no es secreto). estimatedUsage sin
+# workspaceId/projectId devuelve "Not Authorized".
+RAILWAY_WORKSPACE_ID = os.environ.get("RAILWAY_WORKSPACE_ID") or "1a779787-715c-46fa-a153-8c26144e13f7"
+RAILWAY_API_URL    = "https://backboard.railway.com/graphql/v2"
 
 # ── 1. Estadísticas del webhook ───────────────────────────────────────────────
 
@@ -23,11 +27,16 @@ def get_webhook_stats() -> dict:
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     url = f"{WEBHOOK_STATS_URL}?date={yesterday}"
     # Railway puede estar hibernado — intentar hasta 3 veces con pausa entre intentos
+    if not STATS_API_KEY:
+        return {"_error": "falta el secret STATS_API_KEY en GitHub"}
     last_err = ""
     for attempt in range(1, 4):
         try:
             print(f"[Stats] Intento {attempt}/3 — {url}")
-            r = requests.get(url, timeout=45)
+            r = requests.get(url, headers={"X-Api-Key": STATS_API_KEY}, timeout=45)
+            if r.status_code == 401:
+                # No tiene sentido reintentar: la clave no coincide con la de Railway
+                return {"_error": "401 — STATS_API_KEY de GitHub no coincide con la de Railway"}
             r.raise_for_status()
             data = r.json()
             print(f"[Stats] OK: {data}")
@@ -44,7 +53,7 @@ def get_webhook_stats() -> dict:
 
 def get_railway_credits() -> dict:
     if not RAILWAY_TOKEN:
-        return {"error": "sin token"}
+        return {"error": "falta el secret RAILWAY_TOKEN en GitHub"}
     headers = {"Authorization": f"Bearer {RAILWAY_TOKEN}"}
     # Precios Railway Hobby (USD por unidad de recurso)
     PRICES = {
@@ -54,8 +63,8 @@ def get_railway_credits() -> dict:
         "NETWORK_RX_GB":   0.0,       # ingress gratis
     }
     query_usage = """
-    query {
-      estimatedUsage(measurements: [CPU_USAGE, MEMORY_USAGE_GB, NETWORK_TX_GB, NETWORK_RX_GB]) {
+    query($workspaceId: String) {
+      estimatedUsage(workspaceId: $workspaceId, measurements: [CPU_USAGE, MEMORY_USAGE_GB, NETWORK_TX_GB, NETWORK_RX_GB]) {
         projectId
         measurement
         estimatedValue
@@ -64,16 +73,19 @@ def get_railway_credits() -> dict:
     """
     try:
         r = requests.post(
-            "https://backboard.railway.app/graphql/v2",
-            json={"query": query_usage},
+            RAILWAY_API_URL,
+            json={"query": query_usage, "variables": {"workspaceId": RAILWAY_WORKSPACE_ID}},
             headers=headers,
             timeout=15,
         )
         raw = r.json()
         errors = raw.get("errors", [])
         if errors:
-            print(f"[Railway] error: {errors[0].get('message')}")
-            return {"static": True}
+            msg = errors[0].get("message", "error desconocido")
+            print(f"[Railway] error: {msg}")
+            if msg == "Not Authorized":
+                msg = "token inválido o vencido — crear uno nuevo (Railway invalidó todos el 22-oct)"
+            return {"error": msg}
         items = raw.get("data", {}).get("estimatedUsage", [])
         total_usd = sum(
             item.get("estimatedValue", 0) * PRICES.get(item.get("measurement", ""), 0)
@@ -85,7 +97,7 @@ def get_railway_credits() -> dict:
         return {"estimated_usd": total_usd}
     except Exception as e:
         print(f"[Error] Railway: {e}")
-        return {"static": True}
+        return {"error": str(e)[:120]}
 
 # ── 3. GitHub Actions usage ──────────────────────────────────────────────────
 
@@ -147,7 +159,7 @@ def get_github_usage() -> dict:
         }
     except Exception as e:
         print(f"[Error] GitHub: {e}")
-        return {"static": True, "used_minutes": 0, "included_minutes": 2000}
+        return {"error": str(e)[:120]}
 
 
 # ── 4. Componer mensaje Discord ───────────────────────────────────────────────
@@ -173,16 +185,15 @@ def build_message(stats: dict, railway: dict, github: dict) -> str:
     else:
         projection = 0.0
 
-    # Balance estimado de Anthropic (balance inicial - gasto total acumulado)
-    anthropic_remaining = ANTHROPIC_BALANCE - cost_month
-    anthropic_pct       = (anthropic_remaining / ANTHROPIC_BALANCE * 100) if ANTHROPIC_BALANCE else 0
-
-    # Alertas
+    # Alertas — incluye fuentes de datos caídas: antes decía "Todo en orden"
+    # aunque ManyChat/Railway no hubieran devuelto nada.
     alerts = []
-    if isinstance(anthropic_remaining, float) and anthropic_remaining < 3.0:
-        alerts.append("🚨 ANTHROPIC: balance crítico < $3.00 — recargar YA")
-    elif isinstance(anthropic_remaining, float) and anthropic_remaining < 6.0:
-        alerts.append("⚠️ ANTHROPIC: balance bajo < $6.00 — recargar pronto")
+    if stats_error:
+        alerts.append("⚠️ MANYCHAT: sin datos — ver ERROR arriba")
+    if "error" in railway:
+        alerts.append("⚠️ RAILWAY: sin datos — ver Error arriba")
+    if "error" in github:
+        alerts.append("⚠️ GITHUB: sin datos — ver Error arriba")
 
     gh_used  = github.get("used_minutes", 0)
     gh_total = github.get("included_minutes", 2000)
@@ -193,26 +204,18 @@ def build_message(stats: dict, railway: dict, github: dict) -> str:
         elif gh_pct >= 75:
             alerts.append("⚠️ GITHUB: minutos al 75% — monitorear")
 
-    alert_block = "\n".join(alerts) if alerts else "✅ Todo en orden"
-
     # Railway display
     if "error" in railway:
         railway_block = f"  Error: {railway['error']}"
-    elif "estimated_usd" in railway:
-        rw_est   = railway["estimated_usd"]
-        rw_free  = 5.00
-        rw_left  = max(0.0, rw_free - rw_est)
-        rw_pct   = rw_est / rw_free * 100 if rw_free else 0
-        railway_block = (
-            f"  Gastado este mes   : ${rw_est:.4f} ({rw_pct:.0f}% del free tier)\n"
-            f"  Credito restante   : ${rw_left:.2f} / $5.00"
-        )
-        if rw_pct >= 90:
-            alerts.append("🚨 RAILWAY: uso al límite del free tier ($5/mes)")
-        elif rw_pct >= 70:
-            alerts.append("⚠️ RAILWAY: uso al 70% del free tier ($5/mes)")
     else:
-        railway_block = "  Hobby plan — ver uso: railway.com/dashboard"
+        rw_est   = railway["estimated_usd"]
+        rw_incl  = 5.00   # crédito de uso incluido en el plan Hobby
+        rw_pct   = rw_est / rw_incl * 100 if rw_incl else 0
+        railway_block = (
+            f"  Estimado del mes    : ${rw_est:.2f} ({rw_pct:.0f}% del crédito Hobby de $5)"
+        )
+        if rw_pct >= 100:
+            alerts.append("⚠️ RAILWAY: el estimado del mes supera el crédito de $5 del plan Hobby")
 
     # GitHub display
     if "error" in github:
@@ -220,32 +223,31 @@ def build_message(stats: dict, railway: dict, github: dict) -> str:
     else:
         gh_left = gh_total - gh_used
         gh_pct  = gh_used / gh_total * 100 if gh_total else 0
-        static_note = " (estimado)" if github.get("static") else ""
         github_block = (
-            f"  Minutos usados     : {gh_used} / {gh_total} ({gh_pct:.0f}%){static_note}\n"
+            f"  Minutos usados     : {gh_used} / {gh_total} ({gh_pct:.0f}%)\n"
             f"  Minutos restantes  : {gh_left}\n"
             f"  Plan               : Free (2,000 min/mes gratis)"
         )
+
+    alert_block = "\n  ".join(alerts) if alerts else "✅ Todo en orden"
+    na = lambda v: "N/A" if stats_error else v
 
     lines = [
         "```",
         f"REPORTE DIARIO — {today}",
         "",
         "--- WEBHOOK MANYCHAT -------------------",
-        f"  Mensajes ayer       : {msgs_today}",
-        f"  Mensajes este mes   : {msgs_month}",
-        f"  Contactos ayer      : {convs_today}",
-        f"  Contactos este mes  : {convs_month}",
-        f"  Costo ayer          : {f'${cost_today:.4f}' if not stats_error else 'N/A'}",
-        f"  Costo este mes      : {f'${cost_month:.4f}' if not stats_error else 'N/A'}",
-        f"  Proyeccion mensual  : {f'${projection:.2f}' if not stats_error else 'N/A'}",
+        f"  Mensajes ayer       : {na(msgs_today)}",
+        f"  Mensajes este mes   : {na(msgs_month)}",
+        f"  Contactos ayer      : {na(convs_today)}",
+        f"  Contactos este mes  : {na(convs_month)}",
         *([ f"  ERROR               : {stats_error}" ] if stats_error else []),
         "",
-        "--- ANTHROPIC (Claude Haiku) -----------",
-        f"  Balance disponible  : ${anthropic_remaining:.2f}  ({anthropic_pct:.0f}%)",
-        f"  Gastado ayer        : {f'${cost_today:.4f}' if not stats_error else 'N/A'}",
-        f"  Gastado este mes    : {f'${cost_month:.4f}' if not stats_error else 'N/A'}",
-        f"  Proyeccion mensual  : {f'${projection:.2f}' if not stats_error else 'N/A'}",
+        "--- ANTHROPIC (bot ManyChat) -----------",
+        f"  Gastado ayer        : {na(f'${cost_today:.2f}')}",
+        f"  Gastado este mes    : {na(f'${cost_month:.2f}')}",
+        f"  Proyeccion mensual  : {na(f'${projection:.2f}')}",
+        "  Balance             : ver console.anthropic.com",
         "",
         "--- RAILWAY ----------------------------",
         railway_block,

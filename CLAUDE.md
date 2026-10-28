@@ -228,7 +228,8 @@ normalize_name(name) → strip() → remove "^\(\d+\)\s*" → lower()
 
 ### daily_report.py
 - Corre diariamente via `monitoring_daily.yml`
-- Muestra costos de Railway (GraphQL `estimatedUsage`) y Anthropic
+- Muestra costos de Railway (GraphQL `estimatedUsage` con `workspaceId`, endpoint `backboard.railway.com`) y gasto del bot en Anthropic (vía `/stats`)
+- `/stats` exige header `X-Api-Key` = `STATS_API_KEY` (mismo valor en Railway y en GitHub Secrets) — sin él responde 401
 - Railway: precios Hobby — CPU: $0.000463/vCPU-min, Memory: $0.000231/GB-min, Network TX: $0.10/GB
 - GitHub billing API no funciona para cuentas personales → muestra valores estáticos
 
@@ -251,7 +252,7 @@ normalize_name(name) → strip() → remove "^\(\d+\)\s*" → lower()
 | `RAILWAY_TOKEN` | Token API de Railway |
 | `ANTHROPIC_API_KEY` | API key de Anthropic para Claude Haiku |
 | `WEBHOOK_STATS_URL` | URL del endpoint /stats de ManyChat en Railway |
-| `ANTHROPIC_BALANCE` | Balance manual de Anthropic (variable, no secret) |
+| `STATS_API_KEY` | Clave del endpoint /stats — debe coincidir con la variable del servicio royalspace-automations en Railway (también la usa executive_brief) |
 
 ---
 
