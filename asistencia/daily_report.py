@@ -9,6 +9,9 @@ Lógica replicada exactamente:
   - Clasificación: A TIEMPO 07:00-09:15 (09:10 desde 2026-09-30) | TARDE resto
     de la hora hasta 11:00 | FUERA DE RANGO el resto — ver on_time_end_for()
   - Sábados: solo SATURDAY_WORKERS (Clara y Edixon desde 2026-10-17)
+  - Clara entra lun 12:00 / mié 11:15 / jue 12:00 desde 2026-10-13 (clases) —
+    ver entry_time_for(); si al correr el reporte aún no le toca, sale en
+    "ENTRA MÁS TARDE" en vez de "SIN MARCAR"
   - Delta en minutos respecto a 09:00 (floor, sin segundos)
   - Corte de paginación por createdAt < inicio del día
   - Empate UTC/local → prefiere hora directa (sin convertir)
@@ -44,24 +47,32 @@ DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK_ASISTENCIA"]
 # ON_TIME_START ampliado de 8:30 a 7:00 (2026-09-15): llegar temprano no
 # debería marcarse como "FUERA DE RANGO" igual que llegar tarde.
 ON_TIME_START = (7, 0)
-LATE_END      = (11, 0)
-BASE_TIME     = (9, 0)   # referencia para delta
+BASE_TIME     = (9, 0)   # hora de entrada general (referencia para delta)
+LATE_WINDOW_MIN = 120    # TARDE hasta 2h después de la hora de entrada (9:00 → 11:00)
 
-# El límite de "A TIEMPO" se endurece de 9:15 a 9:10 a partir del 2026-09-30
+# La tolerancia de "A TIEMPO" se endurece de 15 a 10 min a partir del 2026-09-30
 # (decisión 2026-09-29 — el reporte del 29 ya corrió con la regla vieja, así
 # que el cambio se ata a la fecha, no al momento del deploy, para que no
 # importe si este código se despliega antes o después de que corra el
 # reporte del día 29).
 _ON_TIME_TIGHTEN_DATE = date(2026, 9, 30)
 
+# Horario de entrada de Clara L-V por sus clases, vigente desde el martes
+# 2026-10-13 (decisión 2026-10-28, retroactiva para que octubre se penalice
+# según este horario). weekday → hora de entrada. Martes, viernes y sábados:
+# 9:00 como todos. Debe coincidir con monthly_report.py.
+_CLARA_SCHEDULE_SINCE = date(2026, 10, 13)
+_CLARA_ENTRY = {0: (12, 0), 2: (11, 15), 3: (12, 0)}   # lun, mié, jue
 
-def on_time_end_for(d: date) -> tuple[int, int]:
-    return (9, 10) if d >= _ON_TIME_TIGHTEN_DATE else (9, 15)
+
+def grace_minutes_for(d: date) -> int:
+    return 10 if d >= _ON_TIME_TIGHTEN_DATE else 15
 
 
-def late_start_for(d: date) -> tuple[int, int]:
-    end = on_time_end_for(d)
-    return (end[0], end[1] + 1)
+def entry_time_for(name: str, d: date) -> tuple[int, int]:
+    if "clara" in name.strip().lower() and d >= _CLARA_SCHEDULE_SINCE:
+        return _CLARA_ENTRY.get(d.weekday(), BASE_TIME)
+    return BASE_TIME
 
 # Sábados: solo Clara y Edixon Cordova, desde el 2026-10-17 (decisión
 # 2026-10-12; entre 2026-08-01 y esa fecha nadie trabajaba sábados).
@@ -92,18 +103,23 @@ def send_discord(title: str, body: str) -> None:
 
 
 # ── Clasificación ─────────────────────────────────────────────────────────────
-def classify(hour: int, minute: int, on_time_end: tuple[int, int], late_start: tuple[int, int]) -> str:
-    t = (hour, minute)
-    if ON_TIME_START <= t <= on_time_end:
+def classify(hour: int, minute: int, name: str, d: date) -> str:
+    t     = hour * 60 + minute
+    entry = entry_time_for(name, d)
+    start = entry[0] * 60 + entry[1]
+    if t < ON_TIME_START[0] * 60 + ON_TIME_START[1]:
+        return "FUERA DE RANGO"
+    if t <= start + grace_minutes_for(d):
         return "A TIEMPO"
-    if late_start <= t <= LATE_END:
+    if t <= start + LATE_WINDOW_MIN:
         return "TARDE"
     return "FUERA DE RANGO"
 
 
-def minutes_delta(hour: int, minute: int) -> int:
-    """Delta en minutos (floor, sin segundos) respecto a BASE_TIME (09:00)."""
-    return hour * 60 + minute - (BASE_TIME[0] * 60 + BASE_TIME[1])
+def minutes_delta(hour: int, minute: int, name: str, d: date) -> int:
+    """Delta en minutos (floor, sin segundos) respecto a su hora de entrada."""
+    entry = entry_time_for(name, d)
+    return hour * 60 + minute - (entry[0] * 60 + entry[1])
 
 
 def fmt_delta(delta: int) -> str:
@@ -115,9 +131,8 @@ def main() -> None:
     now_caracas = datetime.now(timezone.utc).astimezone(VET)
     today_start = now_caracas.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end   = today_start + timedelta(days=1)
-    on_time_end = on_time_end_for(now_caracas.date())
-    late_start  = late_start_for(now_caracas.date())
-    print(f"Regla de hoy ({now_caracas.date()}): A TIEMPO hasta {on_time_end[0]:02d}:{on_time_end[1]:02d}")
+    today       = now_caracas.date()
+    print(f"Regla de hoy ({today}): A TIEMPO hasta {grace_minutes_for(today)} min después de la hora de entrada")
 
     token = get_token(CLIENT_ID, CLIENT_SECRET)
     print("Token OK")
@@ -186,6 +201,8 @@ def main() -> None:
     late:    list[tuple[datetime, str]] = []
     out:     list[tuple[datetime, str]] = []
     missing: list[str] = []
+    later:   list[str] = []   # aún no le toca entrar (ej. Clara los días de clase)
+    now_min = now_caracas.hour * 60 + now_caracas.minute
 
     for p in people:
         pid  = str(p.get("id", ""))
@@ -193,9 +210,12 @@ def main() -> None:
 
         if pid in first_in:
             cin    = first_in[pid]
-            bucket = classify(cin.hour, cin.minute, on_time_end, late_start)
-            delta  = minutes_delta(cin.hour, cin.minute)
+            bucket = classify(cin.hour, cin.minute, name, today)
+            delta  = minutes_delta(cin.hour, cin.minute, name, today)
             line   = f"{name} - {cin.strftime('%H:%M')}  {fmt_delta(delta)}"
+            entry  = entry_time_for(name, today)
+            if entry != BASE_TIME:
+                line += f"  [entrada {entry[0]:02d}:{entry[1]:02d}]"
 
             if bucket == "A TIEMPO":
                 on_time.append((cin, line))
@@ -204,7 +224,11 @@ def main() -> None:
             else:
                 out.append((cin, line))
         else:
-            missing.append(f"{name} - Sin entrada registrada")
+            entry = entry_time_for(name, today)
+            if entry[0] * 60 + entry[1] + grace_minutes_for(today) > now_min:
+                later.append(f"{name} - Entra a las {entry[0]:02d}:{entry[1]:02d}")
+            else:
+                missing.append(f"{name} - Sin entrada registrada")
 
     # Ordenar cada sección por hora de entrada
     on_time.sort(key=lambda x: x[0])
@@ -221,6 +245,8 @@ def main() -> None:
     body += f"TARDE:\n{lines(late)}\n\n"
     body += f"FUERA DE RANGO:\n{lines(out)}\n\n"
     body += f"SIN MARCAR:\n" + ("\n".join(missing) if missing else "Ninguno")
+    if later:
+        body += "\n\nENTRA MÁS TARDE (horario especial):\n" + "\n".join(later)
 
     send_discord("[ASISTENCIA] Entrada diaria", body)
     print("Mensaje enviado a Discord. OK")

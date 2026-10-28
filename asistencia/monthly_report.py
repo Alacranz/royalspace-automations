@@ -11,7 +11,8 @@ Lógica replicada exactamente:
   - Scoring: A TIEMPO=0 | TARDE=-1.5 | FUERA DE RANGO=-2 | SIN MARCAR=-2
   - Fines de semana omitidos (columna vacía, no penaliza), salvo sábados de
     SATURDAY_WORKERS (Clara y Edixon desde 2026-10-17)
-  - A TIEMPO hasta 9:15 (9:10 desde 2026-09-30) — ver on_time_end_for()
+  - A TIEMPO hasta 9:15 (9:10 desde 2026-09-30); Clara con horario propio
+    lun 12:00 / mié 11:15 / jue 12:00 desde 2026-10-13 — ver entry_time_for()
   - Empate UTC/local → prefiere UTC→Caracas (igual que el .ps1 mensual)
   - Excel con colores, freeze, negrita, bordes, fórmula SUM
   - Adjunta el .xlsx al mensaje de Discord
@@ -68,16 +69,30 @@ _SISTEMA_DATOS_ORDER = [
     "Clara", "Cordova", "Sebastian", "Caribay",
 ]
 
-LATE_END    = (11, 0)
+BASE_TIME       = (9, 0)   # hora de entrada general
+LATE_WINDOW_MIN = 120      # LATE hasta 2h después de la hora de entrada (9:00 → 11:00)
 
-# Mismo corte que daily_report.py: "A TIEMPO" hasta 9:15, y hasta 9:10 desde
+# Mismo corte que daily_report.py: tolerancia de 15 min, y 10 min desde
 # 2026-09-30 — atado a la fecha de cada marca, no a la fecha de ejecución,
 # para que reprocesar un mes anterior siga usando la regla de ese momento.
 _ON_TIME_TIGHTEN_DATE = date(2026, 9, 30)
 
+# Horario de entrada de Clara L-V por sus clases, vigente desde el martes
+# 2026-10-13 (decisión 2026-10-28, retroactiva: octubre se penaliza según este
+# horario). weekday → hora de entrada. Martes, viernes y sábados: 9:00 como
+# todos. Debe coincidir con daily_report.py.
+_CLARA_SCHEDULE_SINCE = date(2026, 10, 13)
+_CLARA_ENTRY = {0: (12, 0), 2: (11, 15), 3: (12, 0)}   # lun, mié, jue
 
-def on_time_end_for(d: date) -> tuple[int, int]:
-    return (9, 10) if d >= _ON_TIME_TIGHTEN_DATE else (9, 15)
+
+def grace_minutes_for(d: date) -> int:
+    return 10 if d >= _ON_TIME_TIGHTEN_DATE else 15
+
+
+def entry_time_for(name: str, d: date) -> tuple[int, int]:
+    if "clara" in name.strip().lower() and d >= _CLARA_SCHEDULE_SINCE:
+        return _CLARA_ENTRY.get(d.weekday(), BASE_TIME)
+    return BASE_TIME
 
 POINTS = {
     "ONTIME":   0.0,
@@ -143,12 +158,13 @@ def send_discord_with_file(title: str, body: str, file_bytes: bytes, filename: s
     ).raise_for_status()
 
 
-def classify(hour: int, minute: int, d: date) -> str:
-    t = (hour, minute)
-    on_time_end = on_time_end_for(d)
-    if t <= on_time_end:
+def classify(hour: int, minute: int, name: str, d: date) -> str:
+    t     = hour * 60 + minute
+    entry = entry_time_for(name, d)
+    start = entry[0] * 60 + entry[1]
+    if t <= start + grace_minutes_for(d):
         return "ONTIME"
-    if t <= LATE_END:
+    if t <= start + LATE_WINDOW_MIN:
         return "LATE"
     return "OUT"
 
@@ -337,7 +353,7 @@ def main() -> None:
                 continue
             if d in first_in.get(pid, {}):
                 cin   = first_in[pid][d]
-                state = classify(cin.hour, cin.minute, date(year, month, d))
+                state = classify(cin.hour, cin.minute, name_p, date(year, month, d))
             else:
                 state = "MISSING"
             states[pid][d] = state
