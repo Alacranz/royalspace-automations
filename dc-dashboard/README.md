@@ -100,8 +100,14 @@ Source, y ajusta el valor de `pivot` en `app/callgrid/client.py`.
    - `META_ACCESS_TOKEN`, `META_API_VERSION` — opcionales, solo si quieres que
      el ad spend de algún media buyer se importe automático desde Meta Ads en
      vez de cargarlo a mano (ver sección de Meta Ads más abajo)
-5. Railway corre `railway.json` en cada deploy: aplica las migraciones,
-   corre el seed (idempotente — no duplica nada si ya existe), y levanta el server.
+5. En cada deploy se aplican las migraciones, corre el seed (idempotente — no
+   duplica nada si ya existe) y se levanta el server. **Railway ya no lee
+   `railway.json`** (Config as Code quedó deprecado, 2026-10-28): el comando de
+   inicio vive en Settings → Deploy → Start Command del servicio:
+   `alembic upgrade head && python scripts/seed.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
+   Sin eso el build falla con "No start command detected". Watch paths:
+   `/dc-dashboard/**`. Modo reposo (sleep) activado: se apaga sin tráfico y
+   despierta al abrir el link — mientras duerme no corre el sync nocturno.
 6. El resync nocturno (CallGrid + Meta Ads, últimos 7 días) corre automáticamente
    dentro del mismo proceso a las 3:00 AM (`REPORTING_TIMEZONE`) — no depende
    de ningún cron externo (mismo patrón usado en `manychat/main.py` de
