@@ -769,8 +769,29 @@ def start_github_scheduler() -> None:
         misfire_grace_time=600,
     )
 
+    # Alertas inteligentes (profit_alerts.yml) — 2026-10-28. Cada tipo en su
+    # propia fracción de hora para no juntarse entre sí ni con True Profit (:05):
+    #   :20 → Meta Ads (CPR), desde las 10 AM VET (antes el script no alerta)
+    #   :40 → Llamadas (CallGrid + Ringba), desde las 6 AM VET
+    scheduler.add_job(
+        dispatch_github_workflow,
+        CronTrigger(hour="10-23", minute=20, timezone="America/Caracas"),
+        args=["profit_alerts.yml"],
+        kwargs={"inputs": {"mode": "meta"}},
+        id="alerts_meta",
+        misfire_grace_time=600,
+    )
+    scheduler.add_job(
+        dispatch_github_workflow,
+        CronTrigger(hour="6-23", minute=40, timezone="America/Caracas"),
+        args=["profit_alerts.yml"],
+        kwargs={"inputs": {"mode": "calls"}},
+        id="alerts_calls",
+        misfire_grace_time=600,
+    )
+
     scheduler.start()
-    print("[github_dispatch] Scheduler externo iniciado (true_profit + mb_daily_summary)")
+    print("[github_dispatch] Scheduler externo iniciado (true_profit + mb_daily_summary + alertas meta/llamadas)")
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────

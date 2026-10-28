@@ -291,6 +291,16 @@ trigger `schedule:` — solo `workflow_dispatch:`.
   (no solo en GitHub Secrets) — necesita permiso `Actions: write` sobre el repo
 - Horario: True Profit cada hora en horario laboral (L-V 8-19, S 8-13 EST);
   MB Daily Summary todos los días a las 4:00 AM VET
+- Alertas inteligentes (`profit_alerts.yml`, desde 2026-10-28), cada tipo en su
+  propia fracción de hora para no juntarse con True Profit (:05):
+  **:20** Meta Ads (`mode=meta`, 10-23 VET) y **:40** llamadas CallGrid+Ringba
+  (`mode=calls`, 6-23 VET). El workflow tiene `concurrency` para que nunca
+  corran en paralelo (comparten el estado anti-spam en cache)
+- ⚠️ Railway ya no lee `railway.json` (Config as Code deprecado, 2026-10-28): el
+  start command del bot y de dc-dashboard está en Settings → Deploy → Start
+  Command de cada servicio. El bot tiene volumen en `/data` (`DB_PATH=/data/conversations.db`)
+  — antes la SQLite se borraba en cada deploy. Watch paths: bot
+  `/manychat/**`, `/requirements.txt`, `/railway.json`; dc-dashboard `/dc-dashboard/**`
 - Si se agrega otro workflow con este mismo problema de scheduling, replicar el
   patrón acá en vez de confiar en `schedule:` de GitHub Actions
 

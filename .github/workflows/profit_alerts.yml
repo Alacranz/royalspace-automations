@@ -1,6 +1,6 @@
 name: Profit — Alertas Inteligentes
 
-# Corre cada hora. El script verifica horario internamente:
+# Disparado desde Railway (ver abajo). El script verifica horario internamente:
 #   Meta Ads : no alerta antes de las 10:00 AM VET (UTC-4)
 #   Ringba   : no alerta entre 12am y 6am VET (UTC-4)
 #
@@ -16,14 +16,27 @@ name: Profit — Alertas Inteligentes
 # El estado anti-spam se persiste entre runs via GitHub Actions cache.
 
 on:
-  schedule:
-    - cron: "0 * * * *"   # cada hora en punto (:00)
+  # Sin `schedule:` — GitHub lo descartaba (3-7 corridas/día en vez de 24,
+  # confirmado 2026-10-28). Lo dispara manychat/main.py desde Railway:
+  #   :20 → mode=meta   (10-23 VET)
+  #   :40 → mode=calls  (6-23 VET)
   workflow_dispatch:
     inputs:
+      mode:
+        description: "Qué alertas correr"
+        type: choice
+        options: [all, meta, calls]
+        default: all
       coverage_report:
         description: "Solo enviar a #mod el reporte de cobertura por MB (Ringba vs CallGrid hoy), sin alertas"
         type: boolean
         default: false
+
+# Las corridas de Meta y de llamadas comparten el estado anti-spam (cache):
+# nunca en paralelo, para que una no pise el estado de la otra.
+concurrency:
+  group: profit-alerts
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -70,6 +83,7 @@ jobs:
           CALLGRID_API_KEY:                 ${{ secrets.CALLGRID_API_KEY }}
           CALLGRID_ORG_ID:                  ${{ secrets.CALLGRID_ORG_ID }}
           COVERAGE_REPORT:                  ${{ github.event.inputs.coverage_report || 'false' }}
+          ALERTS_MODE:                      ${{ github.event.inputs.mode || 'all' }}
 
       - name: Guardar estado de alertas
         if: always()

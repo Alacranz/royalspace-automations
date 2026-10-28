@@ -58,6 +58,10 @@ CALLGRID_ORG_ID  = os.environ.get("CALLGRID_ORG_ID", "")
 # workflow_dispatch con coverage_report=true → solo manda a #mod el reporte de
 # cobertura por MB (Ringba vs CallGrid hoy), sin evaluar alertas.
 COVERAGE_REPORT  = (os.environ.get("COVERAGE_REPORT") or "").lower() == "true"
+# "meta" | "calls" | "all". El dispatcher de Railway (manychat/main.py) dispara
+# Meta a los :20 y llamadas a los :40 para que no coincidan entre sí ni con
+# True Profit (:05). Manual sin input → "all".
+ALERTS_MODE      = (os.environ.get("ALERTS_MODE") or "all").strip().lower()
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
 CONFIG_PATH = Path(__file__).parent / "config.json"
@@ -701,8 +705,11 @@ def main() -> None:
 
     state = load_state()
 
-    run_meta_alerts(config, state, now_vet)
-    run_ringba_alerts(config, state, now_utc, now_vet)
+    print(f"[Alertas] Modo: {ALERTS_MODE}")
+    if ALERTS_MODE in ("meta", "all"):
+        run_meta_alerts(config, state, now_vet)
+    if ALERTS_MODE in ("calls", "all"):
+        run_ringba_alerts(config, state, now_utc, now_vet)
 
     save_state(state)
     print("[Alertas] Finalizado.")
