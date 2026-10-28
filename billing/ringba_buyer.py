@@ -12,12 +12,17 @@ from __future__ import annotations
 
 import sys
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytz
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "profit"))
 from common.ringba_client import PAGE_SIZE, MAX_PAGES, to_float, post_calllogs
+
+# Pausa entre requests: un mes completo son ~120+ llamadas seguidas a Ringba,
+# suficientes para que devuelva 429. Suma ~1 min al run mensual.
+REQUEST_PAUSE_S = 0.5
 
 
 def get_month_utc_range(year: int, month: int, tz_name: str = "America/Caracas") -> tuple[datetime, datetime]:
@@ -103,6 +108,7 @@ def get_buyer_revenue(
         offset = 0
 
         for _page in range(1, MAX_PAGES + 1):
+            time.sleep(REQUEST_PAUSE_S)  # no disparar el rate limit de Ringba (429) en un mes completo
             data = post_calllogs(token, account_id, chunk_start, chunk_end, PAGE_SIZE, offset)
             records = (data.get("report") or {}).get("records") or []
 

@@ -110,6 +110,16 @@ def post_calllogs(
     for attempt in range(MAX_ATTEMPTS):
         try:
             resp = requests.post(url, headers=headers, json=body, timeout=60)
+            # 429 = rate limit de Ringba (billing hace ~120 requests seguidos para un
+            # mes completo y lo dispara; confirmado 2026-10-28). Se respeta Retry-After
+            # si viene en segundos; si no, backoff creciente.
+            if resp.status_code == 429 and attempt < MAX_ATTEMPTS - 1:
+                retry_after = resp.headers.get("Retry-After", "")
+                wait = int(retry_after) if retry_after.isdigit() else 20 * (attempt + 1)  # 20s, 40s, 60s, 80s
+                wait = min(max(wait, 5), 120)
+                print(f"  [Ringba] 429 rate limit — reintentando en {wait}s ({attempt + 2}/{MAX_ATTEMPTS})...")
+                time.sleep(wait)
+                continue
             if resp.status_code in (500, 502, 503, 504) and attempt < MAX_ATTEMPTS - 1:
                 wait = 30 * (attempt + 1)  # 30s, 60s, 90s, 120s
                 print(f"  [Ringba] {resp.status_code} — reintentando en {wait}s ({attempt + 2}/{MAX_ATTEMPTS})...")
