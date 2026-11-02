@@ -282,6 +282,46 @@ def parse_cpr(raw) -> float:
     return 0.0
 
 
+def aggregate_by_adset(ads: list[dict]) -> list[dict]:
+    """
+    Agrupa las filas de Meta (nivel anuncio) por ad set.
+
+    Meta devuelve una fila por anuncio; un ad set con varios anuncios salía
+    varias veces y todas compartían la misma memoria anti-spam, lo que podía
+    disparar un "RECUPERADO" justo después de una alerta. Aquí se suma el gasto
+    y los resultados (gasto / CPR de cada anuncio) para evaluar el ad set entero.
+    """
+    groups: dict[str, dict] = {}
+    for ad in ads:
+        adset_id = ad.get("adset_id", "")
+        spend    = float(ad.get("spend") or 0)
+        cpr      = parse_cpr(ad.get("cost_per_result"))
+        g = groups.setdefault(adset_id, {
+            "adset_id":          adset_id,
+            "adset_name":        ad.get("adset_name", "?"),
+            "objective":         ad.get("objective", ""),
+            "optimization_goal": ad.get("optimization_goal", ""),
+            "spend":             0.0,
+            "results":           0.0,
+            "ad_names":          [],
+            "ads":               0,
+        })
+        g["ads"]   += 1
+        g["spend"] += spend
+        if cpr > 0:
+            g["results"] += spend / cpr
+        name = ad.get("ad_name", "?")
+        if name not in g["ad_names"]:
+            g["ad_names"].append(name)
+
+    out = []
+    for g in groups.values():
+        names = g.pop("ad_names")
+        g["ad_name"] = ", ".join(names[:3]) + (f" (+{len(names) - 3})" if len(names) > 3 else "")
+        out.append(g)
+    return out
+
+
 def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
     """Procesa alertas de Meta Ads para todas las cuentas."""
     hour = now_vet.hour
@@ -322,28 +362,27 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
 
         print(f"  {len(ads)} anuncios encontrados (con gasto > $0)")
 
-        for ad in ads:
-            spend = float(ad.get("spend") or 0)
-
-            adset_id   = ad.get("adset_id",          "")
-            adset_name = ad.get("adset_name",         "?")
-            ad_name    = ad.get("ad_name",            "?")
-            objective  = ad.get("objective",          "")
-            opt_goal   = ad.get("optimization_goal",  "")
-            cpr_raw    = ad.get("cost_per_result")
-            cpr        = parse_cpr(cpr_raw)
+        for agg in aggregate_by_adset(ads):
+            spend      = agg["spend"]
+            adset_id   = agg["adset_id"]
+            adset_name = agg["adset_name"]
+            ad_name    = agg["ad_name"]
+            objective  = agg["objective"]
+            opt_goal   = agg["optimization_goal"]
+            results    = agg["results"]
             threshold  = cpr_threshold(objective, opt_goal)
             tipo       = "MENSAJES" if threshold == CPR_MESSAGES else "SITIO WEB"
+            cpr        = spend / results if results > 0 else 0.0
 
             # ── LOG DETALLADO (calibración de umbrales) ──────────────────────
             print(
                 f"  AD SET : {adset_name}\n"
-                f"    Anuncio       : {ad_name}\n"
+                f"    Anuncio(s)    : {ad_name}  ({agg['ads']} anuncio(s))\n"
                 f"    objective     : {objective!r}\n"
                 f"    optim. goal   : {opt_goal!r}\n"
                 f"    → Tipo det.   : {tipo}\n"
                 f"    → Umbral CPR  : ${threshold:.2f}\n"
-                f"    CPR actual    : ${cpr:.2f}  (raw={cpr_raw!r})\n"
+                f"    CPR actual    : ${cpr:.2f}  (resultados={results:.1f})\n"
                 f"    Gasto hoy     : ${spend:.2f}"
             )
             # ─────────────────────────────────────────────────────────────────
@@ -352,13 +391,18 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
                 print(f"    → SKIP (gasto < ${MIN_SPEND:.2f})")
                 continue
 
-            if cpr <= 0:
-                print(f"    → SKIP (sin resultados todavía)")
+            # Sin resultados: ya gastó más que el CPR límite sin conseguir ni uno,
+            # así que su CPR real es peor que el límite → se alerta como
+            # "SIN RESULTADOS". Si aún no llega al límite, es muy pronto para juzgar.
+            no_results = results <= 0
+            if no_results and spend < threshold:
+                print(f"    → SKIP (sin resultados, pero gasto < límite ${threshold:.2f})")
                 continue
+            current = spend if no_results else cpr
 
             entity_key = f"{ad_id}|{adset_id}"
             s          = meta_state.setdefault(entity_key, {})
-            decision   = check_alert_needed(s, cpr, threshold, worse_is_higher=True)
+            decision   = check_alert_needed(s, current, threshold, worse_is_higher=True)
 
             print(f"    → DECISIÓN: {decision}")
 
@@ -366,6 +410,11 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
             mention     = f"<@{discord_uid}>\n" if discord_uid and hook != WEBHOOK_MOD else ""
 
             if decision in ("ALERT", "REPEAT", "WORSENED"):
+                cpr_line = (
+                    f"CPR     : SIN RESULTADOS  (límite ${threshold:.2f})"
+                    if no_results else
+                    f"CPR     : ${cpr:.2f}  (límite ${threshold:.2f})"
+                )
                 msg = mention + "\n".join([
                     "```",
                     "⚠ META ADS ALERTA",
@@ -373,7 +422,7 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
                     f"MB      : {mb_name}",
                     f"Ad Set  : {adset_name}",
                     f"Anuncio : {ad_name}",
-                    f"CPR     : ${cpr:.2f}  (límite ${threshold:.2f})",
+                    cpr_line,
                     f"Gasto   : ${spend:.2f}",
                     "",
                     "Accion  : Revisar budget o pausar",
@@ -384,7 +433,7 @@ def run_meta_alerts(config: dict, state: dict, now_vet: datetime) -> None:
                     print(f"  → Alerta enviada")
                 except Exception as e:
                     print(f"  → ERROR al enviar: {e}")
-                mark_alert(s, cpr)
+                mark_alert(s, current)
 
             elif decision == "RECOVERY":
                 msg = mention + "\n".join([
