@@ -85,6 +85,21 @@ jobs:
           COVERAGE_REPORT:                  ${{ github.event.inputs.coverage_report || 'false' }}
           ALERTS_MODE:                      ${{ github.event.inputs.mode || 'all' }}
 
+      # Foto por media buyer para la Oficina de agentes (no manda nada a Discord).
+      # Solo en las corridas de Meta (:20, 10-23 VET). Nunca rompe las alertas.
+      - name: Foto para la oficina de agentes
+        if: ${{ github.event.inputs.mode != 'calls' && github.event.inputs.coverage_report != 'true' }}
+        continue-on-error: true
+        timeout-minutes: 8
+        run: python profit/office_snapshot.py
+        env:
+          RINGBA_API_TOKEN:      ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID:     ${{ secrets.RINGBA_ACCOUNT_ID }}
+          META_ACCESS_TOKEN:     ${{ secrets.META_ACCESS_TOKEN }}
+          META_API_VERSION:      ${{ vars.META_API_VERSION || 'v25.0' }}
+          CALLGRID_API_KEY:      ${{ secrets.CALLGRID_API_KEY }}
+          CALLGRID_ORG_ID:       ${{ secrets.CALLGRID_ORG_ID }}
+
       - name: Guardar estado de alertas
         if: always()
         uses: actions/cache/save@v4

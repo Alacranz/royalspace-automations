@@ -158,6 +158,13 @@ royalspace-automations/
 - Publishers: "you", "T.I Angela Monroy"
 - Meta Ad Account: act_266001198433130
 
+### Foto para la Oficina de agentes (desde 2026-11-11)
+- `profit/office_snapshot.py` corre como paso extra de `profit_alerts.yml` en modo meta (:20, 10-23 VET), con `continue-on-error`.
+- Suma CallGrid + Ringba por publisher, con telefonía de cada plataforma (CallGrid `cost`; Ringba revenue − payout − profitNet), más gasto/resultados/CPR de Meta.
+- No manda nada a Discord: hace POST a `https://oficina-visual-production.up.railway.app/api/ingesta/mb` (repo royalspace-agentes).
+- Se autentica con HMAC-SHA256 de `CALLGRID_API_KEY` sobre "oficina-ingesta": no requiere secreto nuevo.
+- rs_profit de la oficina sí descuenta telefonía: `revenue − payout − telco − spend × royalspace_spend_share`.
+
 ### Fórmulas de Profit
 
 ```
