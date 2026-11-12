@@ -891,8 +891,10 @@ def responder(req: ChatRequest) -> dict:
         needs_handoff = True
         approx_zip_note = (
             "HANDOFF: The user just gave their zip code after saying nobody answered or there was no coverage. "
-            "Thank them briefly and tell them our team will write back in a few minutes with the best option "
-            "for their area. Do NOT send them to call right now and do NOT ask anything else."
+            "Thank them briefly and say you'll check what options there are in their area and let them know "
+            "here — in the spirit of: ES \"Gracias, déjame revisar qué opciones tenemos en tu zona y ya te aviso "
+            "por aquí.\" / EN \"Thanks! Let me check what's available near you and I'll get right back to you "
+            "here.\" Do NOT send them to call right now and do NOT ask anything else."
         )
     elif sin_respuesta:
         approx_zip_note = (

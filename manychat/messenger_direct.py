@@ -465,6 +465,41 @@ def _enviar_recordatorios() -> None:
               f"({idioma}) enviado={enviado}", flush=True)
 
 
+ETIQUETA_MANUAL = os.environ.get("MESSENGER_ETIQUETA_MANUAL") or "Sugerir zip"
+
+
+def _etiquetar(page_id: str, psid: str, nombre: str) -> bool:
+    """Pone una etiqueta de la bandeja de Meta Business Suite al chat (para filtrarlo y atenderlo a mano)."""
+    token = _token(page_id)
+    if not token:
+        return False
+    try:
+        with _cfg["get_conn"]() as c:
+            c.execute("CREATE TABLE IF NOT EXISTS fb_etiquetas (page_id TEXT, nombre TEXT, id TEXT, PRIMARY KEY (page_id, nombre))")
+            f = c.execute("SELECT id FROM fb_etiquetas WHERE page_id=? AND nombre=?", (page_id, nombre)).fetchone()
+        eid = f[0] if f else None
+        if not eid:
+            r = requests.get(f"{GRAPH}/me/custom_labels", params={"access_token": token, "fields": "page_label_name",
+                                                                   "limit": 200}, timeout=10)
+            eid = next((x["id"] for x in (r.json() or {}).get("data", []) if x.get("page_label_name") == nombre), None)
+            if not eid:
+                r = requests.post(f"{GRAPH}/me/custom_labels", params={"access_token": token}, timeout=10,
+                                  json={"page_label_name": nombre})
+                eid = (r.json() or {}).get("id")
+                if not eid:
+                    print(f"[messenger] no pude crear la etiqueta en {page_id}: {r.text[:200]}", flush=True)
+                    return False
+            with _cfg["get_conn"]() as c:
+                c.execute("INSERT OR REPLACE INTO fb_etiquetas VALUES (?,?,?)", (page_id, nombre, str(eid)))
+        r = requests.post(f"{GRAPH}/{eid}/label", params={"access_token": token}, timeout=10, json={"user": psid})
+        if r.status_code != 200:
+            print(f"[messenger] no pude etiquetar en {page_id}: {r.text[:200]}", flush=True)
+        return r.status_code == 200
+    except Exception as e:
+        print(f"[messenger] error etiqueta: {type(e).__name__}", flush=True)
+        return False
+
+
 def _pausa(res: dict) -> int:
     """1 = pidió que no le escriban (para siempre). Timestamp = pasado a un humano (la IA se aparta 24 h)."""
     if res.get("action") != "pause":
@@ -527,8 +562,8 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
                    int(time.time()), idioma))
     ok = _enviar(page_id, psid, res["response"]) if res.get("response") else None
     if res.get("action") == "pause" and res.get("response"):
-        print(f"[messenger] NECESITA HUMANO · página {page_id} · chat {quien} (dio su zip tras no poder comunicarse)",
-              flush=True)
+        etiquetado = _etiquetar(page_id, psid, ETIQUETA_MANUAL)
+        print(f"[messenger] NECESITA HUMANO · página {page_id} · chat {quien} · etiqueta={etiquetado}", flush=True)
     if ok and res.get("action") == "respond":
         _programar_tarjeta(page_id, psid, idioma)
     print(f"[messenger] {quien}: IA acción={res.get('action')} · {len(res.get('response') or '')} chars · "
