@@ -65,6 +65,7 @@ def configurar(responder, chat_request, get_conn, detectar_idioma=None) -> None:
             except Exception:
                 pass  # ya existe
     threading.Thread(target=_bucle_recordatorios, daemon=True).start()
+    threading.Thread(target=_bucle_oficina, daemon=True).start()
 
 
 _ultima_purga = [0.0]
@@ -360,6 +361,7 @@ def _programar_tarjeta(page_id: str, psid: str, idioma: str) -> None:
 
 def _mandar_tarjeta(page_id: str, psid: str, idioma: str) -> None:
     if _boton_llamar(page_id, psid, idioma):
+        _metrica(page_id, "tarjetas")
         with _cfg["get_conn"]() as c:
             c.execute("UPDATE fb_estado SET tarjeta=? WHERE page_id=? AND psid=?", (int(time.time()), page_id, psid))
 
@@ -421,6 +423,102 @@ def _comentario(page_id: str, v: dict) -> None:
     def res(r):
         return "ok" if r.status_code == 200 else f"error {r.status_code}: {r.text[:120]}"
     print(f"[messenger] comentario respondido · público {res(r1)} · like {res(r2)} · privado {res(r3)}", flush=True)
+    _metrica(page_id, "comentarios" if r1.status_code == 200 and r3.status_code == 200 else "errores_comentario")
+
+
+# ── Métricas para la oficina 3D y el resumen diario (solo conteos, sin datos de pacientes) ──
+PAGINAS = {
+    "617088438163804": "ProCare - Dental Center", "579457641927025": "Dra Selena Humboldt",
+    "615312844992080": "Dra. Olivia Garcia", "483631408161200": "Dentista Arlet Allerton",
+    "198222373382362": "Dental Smile Clinic", "206710499198387": "Dr. Dentista Marina Wilson",
+    "220499631147731": "PerfectSmile", "231985673330880": "Dental Care Professionals",
+    "100806385416210": "Dentista Latino",
+}
+ETIQUETAS_MANUALES = ("Sugerir zip", "Pide humano")
+OFFSET_CCS = 4 * 3600  # Caracas = UTC-4, sin horario de verano
+
+
+def _dia_ccs(ts: float | None = None) -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime((ts or time.time()) - OFFSET_CCS))
+
+
+def _inicio_dia(dia: str) -> int:
+    import calendar
+    return calendar.timegm(time.strptime(dia, "%Y-%m-%d")) + OFFSET_CCS
+
+
+def _metrica(page_id: str, clave: str, n: int = 1) -> None:
+    try:
+        with _cfg["get_conn"]() as c:
+            c.execute("CREATE TABLE IF NOT EXISTS fb_metricas (dia TEXT, page_id TEXT, clave TEXT, n INTEGER, "
+                      "PRIMARY KEY (dia, page_id, clave))")
+            c.execute("""INSERT INTO fb_metricas VALUES (?,?,?,?)
+                         ON CONFLICT(dia, page_id, clave) DO UPDATE SET n = n + excluded.n""",
+                      (_dia_ccs(), page_id, clave, n))
+    except Exception as e:
+        print(f"[messenger] métrica: {type(e).__name__}", flush=True)
+
+
+def resumen(dia: str | None = None) -> dict:
+    """Números del día (hora Caracas) por página: chats, idioma, respuestas, comentarios, etiquetas, errores."""
+    dia = dia or _dia_ccs()
+    t0, t1 = _inicio_dia(dia), _inicio_dia(dia) + 86400
+    pags = {pid: {"nombre": n, "chats": 0, "es": 0, "en": 0, "etiquetas": {}} for pid, n in PAGINAS.items()}
+    manuales = []
+    with _cfg["get_conn"]() as c:
+        for tabla in ("fb_metricas (dia TEXT, page_id TEXT, clave TEXT, n INTEGER, PRIMARY KEY (dia, page_id, clave))",
+                      "fb_etiquetado (page_id TEXT, psid TEXT, nombre TEXT, ts INTEGER, PRIMARY KEY (page_id, psid, nombre))"):
+            c.execute(f"CREATE TABLE IF NOT EXISTS {tabla}")
+        for pid, clave, n in c.execute("SELECT page_id, clave, n FROM fb_metricas WHERE dia=?", (dia,)).fetchall():
+            pags.setdefault(pid, {"nombre": pid, "chats": 0, "es": 0, "en": 0, "etiquetas": {}})[clave] = n
+        for pid, idioma, n in c.execute("""SELECT page_id, idioma, COUNT(*) FROM fb_estado
+                                           WHERE ult_usuario >= ? AND ult_usuario < ? GROUP BY page_id, idioma""",
+                                        (t0, t1)).fetchall():
+            if pid in pags:
+                pags[pid]["chats"] += n
+                if idioma in ("es", "en"):
+                    pags[pid][idioma] += n
+        for pid, nombre, n in c.execute("""SELECT page_id, nombre, COUNT(*) FROM fb_etiquetado
+                                           WHERE ts >= ? AND ts < ? GROUP BY page_id, nombre""", (t0, t1)).fetchall():
+            if pid in pags:
+                pags[pid]["etiquetas"][nombre] = n
+        for pid, psid, nombre, ts in c.execute(
+                f"""SELECT page_id, psid, nombre, ts FROM fb_etiquetado WHERE ts >= ? AND nombre IN
+                    ({",".join("?" * len(ETIQUETAS_MANUALES))}) ORDER BY ts DESC LIMIT 50""",
+                (int(time.time()) - 48 * 3600, *ETIQUETAS_MANUALES)).fetchall():
+            manuales.append({"page_id": pid, "pagina": PAGINAS.get(pid, pid), "etiqueta": nombre,
+                             "chat": hashlib.sha256(psid.encode()).hexdigest()[:8],
+                             "hora_caracas": time.strftime("%Y-%m-%d %H:%M", time.gmtime(ts - OFFSET_CCS))})
+    claves = ("chats", "es", "en", "respuestas", "tarjetas", "recordatorios", "comentarios",
+              "errores_envio", "errores_comentario", "dejado_a_otra_app")
+    tot = {k: sum(p.get(k, 0) for p in pags.values()) for k in claves}
+    tot["etiquetas"] = {}
+    for p in pags.values():
+        for k, v in p["etiquetas"].items():
+            tot["etiquetas"][k] = tot["etiquetas"].get(k, 0) + v
+    return {"dia": dia, "hora_caracas": time.strftime("%H:%M", time.gmtime(time.time() - OFFSET_CCS)),
+            "totales": tot, "paginas": pags, "manuales": manuales}
+
+
+def _enviar_a_oficina() -> None:
+    url = (os.environ.get("OFICINA_URL") or "https://oficina-visual-production.up.railway.app") + "/api/ingesta/messenger"
+    k = os.environ.get("CALLGRID_API_KEY", "")
+    if not k:
+        return
+    firma = hmac.new(k.encode(), b"oficina-ingesta", hashlib.sha256).hexdigest()
+    try:
+        r = requests.post(url, json=resumen(), headers={"x-oficina-token": firma}, timeout=15)
+        if r.status_code != 200:
+            print(f"[messenger] oficina respondió {r.status_code}: {r.text[:120]}", flush=True)
+    except Exception as e:
+        print(f"[messenger] oficina: {type(e).__name__}", flush=True)
+
+
+def _bucle_oficina() -> None:
+    time.sleep(60)
+    while True:
+        _enviar_a_oficina()
+        time.sleep(int(os.environ.get("OFICINA_CADA_SEG") or 600))
 
 
 _RECORDATORIOS = {
@@ -458,6 +556,7 @@ def _enviar_recordatorios() -> None:
         if ahora - ult < minutos * 60 or ahora - ult > 23 * 3600 + 1800:
             continue  # todavía no toca, o ya se cerró la ventana de 24 h
         enviado = _boton_llamar(page_id, psid, idioma, texto)
+        _metrica(page_id, "recordatorios" if enviado else "errores_envio")
         with _cfg["get_conn"]() as c:
             c.execute("UPDATE fb_estado SET recordatorios = ? WHERE page_id = ? AND psid = ?",
                       (n + 1, page_id, psid))
@@ -568,6 +667,7 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
         _ultimo_mid.pop(clave, None)
     if _otra_app_reciente(page_id, psid):
         print(f"[messenger] {quien}: este chat lo atiende otra app (ManyChat) — no respondo", flush=True)
+        _metrica(page_id, "dejado_a_otra_app")
         return
     if fila and fila[0] and (fila[0] == 1 or time.time() - fila[0] < 24 * 3600):
         print(f"[messenger] {quien}: conversación pausada, no respondo", flush=True)
@@ -594,6 +694,8 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
                   (page_id, psid, _pausa(res), 1 if aviso else 0,
                    int(time.time()), idioma))
     ok = _enviar(page_id, psid, res["response"]) if res.get("response") else None
+    if ok is not None:
+        _metrica(page_id, "respuestas" if ok else "errores_envio")
     for nombre in res.get("tags") or []:
         _etiquetar_una_vez(page_id, psid, nombre)
     _etiqueta_idioma(page_id, psid, res)
@@ -619,6 +721,7 @@ async def estado(request: Request):
     return {"paginas": [{"page_id": f[0], "mensajes_7d": f[1], "personas_7d": f[2],
                          "ultimo": time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(f[3])),
                          "modo": _modo(f[0])} for f in filas],
+            "hoy": resumen(), "ayer": resumen(_dia_ccs(time.time() - 86400)),
             "configurado": {"app_secret": bool(os.environ.get("META_APP_SECRET")),
                             "verify_token": bool(os.environ.get("MESSENGER_VERIFY_TOKEN")),
                             "paginas_con_token": list(_tokens().keys())}}
