@@ -110,6 +110,21 @@ def _get_manychat_stats() -> dict:
         return {}
 
 
+def _get_messenger_ayer() -> dict:
+    """Resumen de ayer de la IA de Messenger (royalspace-automations /messenger/status)."""
+    if not WEBHOOK_STATS:
+        return {}
+    url = WEBHOOK_STATS.rsplit("/stats", 1)[0] + "/messenger/status"
+    try:
+        headers = {"X-Api-Key": STATS_API_KEY} if STATS_API_KEY else {}
+        r = requests.get(url, headers=headers, timeout=20)
+        r.raise_for_status()
+        return r.json().get("ayer") or {}
+    except Exception as e:
+        print(f"  [Messenger] Error: {e}")
+        return {}
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def run() -> None:
@@ -226,6 +241,8 @@ def run() -> None:
 
     # ── 4. ManyChat stats ──────────────────────────────────────────────────────
     mc_stats = _get_manychat_stats()
+    msg_ayer = _get_messenger_ayer()
+    msg_tot = msg_ayer.get("totales") or {}
 
     # ── 5. Claude diagnosis ────────────────────────────────────────────────────
     print("\n[Claude] Generando diagnóstico...")
@@ -239,7 +256,11 @@ def run() -> None:
         f"Vencidas: {len(overdue_invoices)} (${overdue_total:,.2f})\n"
         f"Buyers acumulando: {len(accumulating)} (${accum_total:,.2f} pendiente)\n"
     )
-    if mc_stats:
+    if msg_tot:
+        diag_input += (f"Messenger ayer: {msg_tot.get('chats', 0)} chats ({msg_tot.get('es', 0)} español / "
+                       f"{msg_tot.get('en', 0)} inglés), {msg_tot.get('comentarios', 0)} comentarios respondidos, "
+                       f"etiquetas {msg_tot.get('etiquetas', {})}\n")
+    elif mc_stats:
         total_convs = mc_stats.get("conversations_today", "?")
         diag_input += f"Conversaciones ManyChat ayer: {total_convs}\n"
 
@@ -289,7 +310,25 @@ def run() -> None:
 
     lines.append("")
 
-    if mc_stats:
+    if msg_tot:
+        et = msg_tot.get("etiquetas", {})
+        manual = et.get("Sugerir zip", 0) + et.get("Pide humano", 0)
+        top = sorted(((p.get("chats", 0), p.get("nombre", "")[:18], p.get("es", 0), p.get("en", 0))
+                      for p in (msg_ayer.get("paginas") or {}).values()), reverse=True)[:3]
+        lines += [
+            "── MESSENGER (IA directa) ───────────────────────",
+            f"  Chats ayer   : {msg_tot.get('chats', 0)}  ·  ES {msg_tot.get('es', 0)} / EN {msg_tot.get('en', 0)}",
+            f"  Respuestas   : {msg_tot.get('respuestas', 0)}  ·  Comentarios {msg_tot.get('comentarios', 0)}"
+            f"  ·  Recordatorios {msg_tot.get('recordatorios', 0)}",
+            f"  A mano       : {manual} (Sugerir zip {et.get('Sugerir zip', 0)} · Pide humano {et.get('Pide humano', 0)})",
+            f"  Calidad      : Medicaid {et.get('Medicaid', 0)} · Fuera USA {et.get('Fuera de USA', 0)}"
+            f" · Alto valor {et.get('Alto valor', 0)} · Dolor {et.get('Urgencia / dolor', 0)}",
+        ] + [f"    {n:<18} {c:>3} chats (ES {e} / EN {i})" for c, n, e, i in top if c]
+        errores = msg_tot.get("errores_envio", 0) + msg_tot.get("errores_comentario", 0)
+        if errores:
+            lines.append(f"  ⚠️ Errores de envío: {errores}")
+        lines.append("")
+    elif mc_stats:
         total_convs = mc_stats.get("conversations_today", "?")
         lines += [
             "── MANYCHAT ─────────────────────────────────────",
