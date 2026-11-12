@@ -58,7 +58,7 @@ def configurar(responder, chat_request, get_conn) -> None:
         c.execute("""CREATE TABLE IF NOT EXISTS fb_estado (
             page_id TEXT, psid TEXT, pausado INTEGER DEFAULT 0, avisado INTEGER DEFAULT 0,
             PRIMARY KEY (page_id, psid))""")
-        for col in ("ult_usuario INTEGER DEFAULT 0", "recordatorios INTEGER DEFAULT 0", "idioma TEXT DEFAULT 'es'"):
+        for col in ("ult_usuario INTEGER DEFAULT 0", "recordatorios INTEGER DEFAULT 0", "idioma TEXT DEFAULT 'es'", "otra_app INTEGER DEFAULT 0"):
             try:
                 c.execute(f"ALTER TABLE fb_estado ADD COLUMN {col}")
             except Exception:
@@ -158,8 +158,11 @@ async def recibir(request: Request, tareas: BackgroundTasks):
                   [(ev, "standby") for ev in entry.get("standby", [])]
         for ev, canal in eventos:
             msg = ev.get("message") or {}
-            if not msg or msg.get("is_echo"):
-                continue  # ecos de nuestras propias respuestas, lecturas, entregas
+            if msg.get("is_echo"):
+                _eco(page_id, ev, msg)
+                continue
+            if not msg:
+                continue  # lecturas, entregas
             mid = msg.get("mid") or f"{page_id}:{ev.get('timestamp')}"
             psid = str((ev.get("sender") or {}).get("id", ""))
             texto = (msg.get("text") or "").strip()
@@ -173,6 +176,29 @@ async def recibir(request: Request, tareas: BackgroundTasks):
             if canal == "messaging" and _modo(page_id) == "responder":
                 tareas.add_task(_contestar, page_id, psid, texto, mid)
     return {"ok": True}
+
+NUESTRA_APP = os.environ.get("META_APP_ID") or "1147303537768031"
+
+
+def _eco(page_id: str, ev: dict, msg: dict) -> None:
+    """Si otra app (ManyChat) le escribió a esta persona, ese chat sigue siendo suyo: no respondemos encima."""
+    app = str(msg.get("app_id") or "")
+    if not app or app == NUESTRA_APP:
+        return
+    psid = str((ev.get("recipient") or {}).get("id", ""))
+    if not psid:
+        return
+    with _cfg["get_conn"]() as c:
+        c.execute("""INSERT INTO fb_estado (page_id, psid, otra_app) VALUES (?,?,?)
+                     ON CONFLICT(page_id, psid) DO UPDATE SET otra_app=excluded.otra_app""",
+                  (page_id, psid, int(time.time())))
+    print(f"[messenger] chat {hashlib.sha256(psid.encode()).hexdigest()[:8]} atendido por otra app ({app})", flush=True)
+
+
+def _otra_app_reciente(page_id: str, psid: str) -> bool:
+    with _cfg["get_conn"]() as c:
+        f = c.execute("SELECT otra_app FROM fb_estado WHERE page_id=? AND psid=?", (page_id, psid)).fetchone()
+    return bool(f and f[0] and time.time() - f[0] < 24 * 3600)
 
 
 def _registrar(mid: str, page_id: str, psid: str) -> bool:
@@ -274,7 +300,7 @@ def _enviar_recordatorios() -> None:
                              WHERE pausado = 0 AND ult_usuario > ? AND recordatorios < 2""",
                           (ahora - 23 * 3600 - 1800,)).fetchall()
     for page_id, psid, n, ult, idioma in filas:
-        if _modo(page_id) != "responder":
+        if _modo(page_id) != "responder" or _otra_app_reciente(page_id, psid):
             continue
         idioma = idioma if idioma in _RECORDATORIOS else "es"
         minutos, texto = _RECORDATORIOS[idioma][n]
@@ -303,6 +329,11 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
                 else "Done — we deleted your conversation history with us.")
         return
     quien = hashlib.sha256(psid.encode()).hexdigest()[:8]
+    # Damos 15 s para ver si ManyChat contesta este mismo mensaje (chat que todavía es suyo).
+    time.sleep(int(os.environ.get("MESSENGER_ESPERA_SEG") or 15))
+    if _otra_app_reciente(page_id, psid):
+        print(f"[messenger] {quien}: este chat lo atiende otra app (ManyChat) — no respondo", flush=True)
+        return
     if fila and fila[0]:
         print(f"[messenger] {quien}: conversación pausada, no respondo", flush=True)
         return  # pidió que no le escriban
