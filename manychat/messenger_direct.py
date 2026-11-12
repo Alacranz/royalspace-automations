@@ -177,6 +177,9 @@ async def recibir(request: Request, tareas: BackgroundTasks):
                 tareas.add_task(_contestar, page_id, psid, texto, mid)
     return {"ok": True}
 
+_lock = threading.Lock()
+_pendientes: dict = {}
+_ultimo_mid: dict = {}
 NUESTRA_APP = os.environ.get("META_APP_ID") or "1147303537768031"
 
 
@@ -329,8 +332,17 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
                 else "Done — we deleted your conversation history with us.")
         return
     quien = hashlib.sha256(psid.encode()).hexdigest()[:8]
-    # Damos 15 s para ver si ManyChat contesta este mismo mensaje (chat que todavía es suyo).
+    clave = (page_id, psid)
+    with _lock:
+        _pendientes.setdefault(clave, []).append(texto)
+        _ultimo_mid[clave] = mid
+    # Damos 15 s: (1) ver si ManyChat contesta este mismo mensaje y (2) juntar mensajes seguidos.
     time.sleep(int(os.environ.get("MESSENGER_ESPERA_SEG") or 15))
+    with _lock:
+        if _ultimo_mid.get(clave) != mid:
+            return  # llegó otro mensaje después: ese responde a todo junto
+        texto = "\n".join(t for t in _pendientes.pop(clave, []) if t) or texto
+        _ultimo_mid.pop(clave, None)
     if _otra_app_reciente(page_id, psid):
         print(f"[messenger] {quien}: este chat lo atiende otra app (ManyChat) — no respondo", flush=True)
         return
