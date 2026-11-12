@@ -152,24 +152,40 @@ def _etiquetas_de(page_id: str) -> list[dict]:
 
 def _inventario_y_limpieza() -> None:
     """MESSENGER_INVENTARIO_ETIQUETAS=1 → anota en el log cuántas etiquetas hay por página.
-    MESSENGER_BORRAR_ETIQUETAS=["Nombre", ...] → borra esas (nunca las nuestras)."""
+    MESSENGER_BORRAR_ETIQUETAS=["Nombre", ...] → borra todas las que se llamen así.
+    MESSENGER_DEDUP_ETIQUETAS=["Nombre", ...] → deja 1 (la más antigua) y borra las copias.
+    MESSENGER_LIMPIEZA_PAGINAS=["page_id", ...] → limita la limpieza a esas páginas. Nunca toca las nuestras."""
     borrar = set(json.loads(os.environ.get("MESSENGER_BORRAR_ETIQUETAS") or "[]")) - ETIQUETAS_NUESTRAS
-    if not (os.environ.get("MESSENGER_INVENTARIO_ETIQUETAS") or borrar):
+    dedup = set(json.loads(os.environ.get("MESSENGER_DEDUP_ETIQUETAS") or "[]")) - ETIQUETAS_NUESTRAS
+    solo = set(json.loads(os.environ.get("MESSENGER_LIMPIEZA_PAGINAS") or "[]"))
+    if not (os.environ.get("MESSENGER_INVENTARIO_ETIQUETAS") or borrar or dedup):
         return
     time.sleep(20)
     from collections import Counter
     for pid, nombre in PAGINAS.items():
         ets = _etiquetas_de(pid)
-        cuenta = Counter(e.get("page_label_name", "?") for e in ets)
-        print(f"[messenger] INVENTARIO {nombre}: {len(ets)} etiquetas · " +
-              " · ".join(f"{k}×{v}" for k, v in cuenta.most_common()), flush=True)
-        if borrar:
+        if (borrar or dedup) and (not solo or pid in solo):
+            vistos, a_borrar = set(), []
+            for e in sorted(ets, key=lambda e: int(e["id"])):
+                n = e.get("page_label_name", "")
+                if n in borrar or (n in dedup and n in vistos):
+                    a_borrar.append(e)
+                vistos.add(n)
             ok = fallo = 0
-            for e in ets:
-                if e.get("page_label_name") in borrar:
-                    r = requests.delete(f"{GRAPH}/{e['id']}", params={"access_token": _token(pid)}, timeout=15)
-                    ok, fallo = (ok + 1, fallo) if r.status_code == 200 else (ok, fallo + 1)
+            for e in a_borrar:
+                r = requests.delete(f"{GRAPH}/{e['id']}", params={"access_token": _token(pid)}, timeout=15)
+                if r.status_code == 200:
+                    ok += 1
+                else:
+                    fallo += 1
+                    if fallo <= 2:
+                        print(f"[messenger] no se pudo borrar '{e.get('page_label_name')}': {r.text[:150]}", flush=True)
             print(f"[messenger] LIMPIEZA {nombre}: borradas {ok}, fallaron {fallo}", flush=True)
+            ets = _etiquetas_de(pid)
+        cuenta = Counter(e.get("page_label_name", "?") for e in ets)
+        sin_ad = [(k, v) for k, v in cuenta.most_common() if not k.startswith("ad_id.")]
+        print(f"[messenger] INVENTARIO {nombre}: {len(ets)} etiquetas ({sum(v for k, v in cuenta.items() if k.startswith('ad_id.'))} de anuncios) · " +
+              " · ".join(f"{k}×{v}" for k, v in sin_ad), flush=True)
 
 
 def _revisar_tokens() -> None:
