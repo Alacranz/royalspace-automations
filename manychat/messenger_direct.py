@@ -58,7 +58,7 @@ def configurar(responder, chat_request, get_conn) -> None:
         c.execute("""CREATE TABLE IF NOT EXISTS fb_estado (
             page_id TEXT, psid TEXT, pausado INTEGER DEFAULT 0, avisado INTEGER DEFAULT 0,
             PRIMARY KEY (page_id, psid))""")
-        for col in ("ult_usuario INTEGER DEFAULT 0", "recordatorios INTEGER DEFAULT 0", "idioma TEXT DEFAULT 'es'", "otra_app INTEGER DEFAULT 0"):
+        for col in ("ult_usuario INTEGER DEFAULT 0", "recordatorios INTEGER DEFAULT 0", "idioma TEXT DEFAULT 'es'", "otra_app INTEGER DEFAULT 0", "tarjeta INTEGER DEFAULT 0"):
             try:
                 c.execute(f"ALTER TABLE fb_estado ADD COLUMN {col}")
             except Exception:
@@ -276,6 +276,37 @@ def _boton_llamar(page_id: str, psid: str, idioma: str, texto: str = "") -> bool
     return r.status_code == 200
 
 
+_seq_ia: dict = {}
+
+
+def _programar_tarjeta(page_id: str, psid: str, idioma: str) -> None:
+    """Tarjeta de llamar: inmediata en la primera respuesta; después, una sola vez cuando la charla
+    se calma (MESSENGER_TARJETA_SEG sin que la persona escriba ni la IA responda)."""
+    clave = (page_id, psid)
+    with _lock:
+        _seq_ia[clave] = _seq_ia.get(clave, 0) + 1
+        seq = _seq_ia[clave]
+    with _cfg["get_conn"]() as c:
+        f = c.execute("SELECT tarjeta FROM fb_estado WHERE page_id=? AND psid=?", (page_id, psid)).fetchone()
+    if not (f and f[0]):
+        _mandar_tarjeta(page_id, psid, idioma)
+        return
+
+    def esperar():
+        time.sleep(int(os.environ.get("MESSENGER_TARJETA_SEG") or 15))
+        with _lock:
+            if _seq_ia.get(clave) != seq or _pendientes.get(clave):
+                return  # la conversación siguió: la tarjeta saldrá cuando se calme
+        _mandar_tarjeta(page_id, psid, idioma)
+    threading.Thread(target=esperar, daemon=True).start()
+
+
+def _mandar_tarjeta(page_id: str, psid: str, idioma: str) -> None:
+    if _boton_llamar(page_id, psid, idioma):
+        with _cfg["get_conn"]() as c:
+            c.execute("UPDATE fb_estado SET tarjeta=? WHERE page_id=? AND psid=?", (int(time.time()), page_id, psid))
+
+
 _RECORDATORIOS = {
     # (minutos desde el último mensaje de la persona, texto) — siempre dentro de la ventana de 24 h de Meta
     "es": [(30, "¿Todavía buscas dentista? 🦷 Llámanos y te conectamos con uno cerca de ti. "
@@ -373,7 +404,7 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
                    int(time.time()), idioma))
     ok = _enviar(page_id, psid, res["response"]) if res.get("response") else None
     if ok and res.get("action") == "respond":
-        _boton_llamar(page_id, psid, idioma)
+        _programar_tarjeta(page_id, psid, idioma)
     print(f"[messenger] {quien}: IA acción={res.get('action')} · {len(res.get('response') or '')} chars · "
           f"enviado={ok}", flush=True)
     _accion(page_id, psid, "typing_off")
