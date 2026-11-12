@@ -148,7 +148,9 @@ async def recibir(request: Request, tareas: BackgroundTasks):
         return {"ok": True}
     for entry in data.get("entry", []):
         page_id = str(entry.get("id"))
-        for ev in entry.get("messaging", []):
+        eventos = [(ev, "messaging") for ev in entry.get("messaging", [])] + \
+                  [(ev, "standby") for ev in entry.get("standby", [])]
+        for ev, canal in eventos:
             msg = ev.get("message") or {}
             if not msg or msg.get("is_echo"):
                 continue  # ecos de nuestras propias respuestas, lecturas, entregas
@@ -159,7 +161,9 @@ async def recibir(request: Request, tareas: BackgroundTasks):
                 texto = "[imagen o archivo adjunto]"
             if not psid or not _registrar(mid, page_id, psid):
                 continue  # reenvío de Meta: ya lo procesamos
-            if _modo(page_id) == "responder":
+            print(f"[messenger] evento {canal} página {page_id} · modo {_modo(page_id)}", flush=True)
+            # standby = otra app (ManyChat) controla la conversación: solo observamos, nunca respondemos
+            if canal == "messaging" and _modo(page_id) == "responder":
                 tareas.add_task(_contestar, page_id, psid, texto, mid)
     return {"ok": True}
 
