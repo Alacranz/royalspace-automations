@@ -331,9 +331,6 @@ _COMENTARIOS = {
            "We have clinics all around your area. Call us now so we can review your case and help with your dental problem.",
            "Hi! We have clinics near your location. Call us and we'll gladly connect you with the closest clinic."],
 }
-_CIERRE = {"es": "al llamar por favor ingresa tu código postal, presione 1 y espera en la línea",
-           "en": "when you call, please enter your zip code and stay on the line"}
-
 
 def _modo_comentarios(page_id: str) -> str:
     return _json_env("MESSENGER_COMENTARIOS").get(page_id, "observar")
@@ -367,7 +364,7 @@ def _comentario(page_id: str, v: dict) -> None:
         return
     visible = f"({tel[2:5]}) {tel[5:8]}-{tel[8:]}"
     import random
-    publico = f"{random.choice(_COMENTARIOS[idioma])}\n{visible}\n{_CIERRE[idioma]}"
+    publico = f"{random.choice(_COMENTARIOS[idioma])}\n{visible}"
     r1 = requests.post(f"{GRAPH}/{cid}/comments", params={"access_token": token}, timeout=15,
                        data={"message": publico})
     r2 = requests.post(f"{GRAPH}/{cid}/likes", params={"access_token": token}, timeout=15)
