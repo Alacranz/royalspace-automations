@@ -34,6 +34,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 
 import requests
@@ -51,9 +52,25 @@ def configurar(responder, chat_request, get_conn) -> None:
         c.execute("""CREATE TABLE IF NOT EXISTS fb_eventos (
             mid TEXT PRIMARY KEY, page_id TEXT, psid_hash TEXT, ts INTEGER,
             es_admin_test INTEGER DEFAULT 0, accion TEXT)""")
+        _purgar(c)
         c.execute("""CREATE TABLE IF NOT EXISTS fb_estado (
             page_id TEXT, psid TEXT, pausado INTEGER DEFAULT 0, avisado INTEGER DEFAULT 0,
             PRIMARY KEY (page_id, psid))""")
+
+
+_ultima_purga = [0.0]
+_BORRAR = re.compile(r"\b(delete my data|borrar? mis datos|elimin(a|ar) mis datos)\b", re.I)
+
+
+def _purgar(c) -> None:
+    """Política de privacidad: el historial se guarda máximo 90 días."""
+    for sql, args in (("DELETE FROM messages WHERE created_at < datetime('now', '-90 days')", ()),
+                      ("DELETE FROM fb_eventos WHERE ts < ?", (int(time.time()) - 90 * 86400,))):
+        try:
+            c.execute(sql, args)
+        except Exception:
+            pass  # tabla todavía no creada (primer arranque)
+    _ultima_purga[0] = time.time()
 
 
 def _json_env(nombre: str) -> dict:
@@ -151,8 +168,21 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
     with _cfg["get_conn"]() as c:
         fila = c.execute("SELECT pausado, avisado FROM fb_estado WHERE page_id=? AND psid=?",
                          (page_id, psid)).fetchone()
+    if _BORRAR.search(texto or ""):
+        sid = f"fb:{page_id}:{psid}"
+        with _cfg["get_conn"]() as c:
+            c.execute("DELETE FROM messages WHERE subscriber_id = ?", (sid,))
+            c.execute("DELETE FROM subscriber_language WHERE subscriber_id = ?", (sid,))
+            c.execute("DELETE FROM fb_estado WHERE page_id = ? AND psid = ?", (page_id, psid))
+        es = bool(re.search(r"borr|elimin", texto, re.I))
+        _enviar(page_id, psid, "Listo, borramos tu historial de conversación con nosotros." if es
+                else "Done — we deleted your conversation history with us.")
+        return
     if fila and fila[0]:
         return  # pidió que no le escriban
+    if time.time() - _ultima_purga[0] > 86400:
+        with _cfg["get_conn"]() as c:
+            _purgar(c)
     _accion(page_id, psid, "mark_seen")
     _accion(page_id, psid, "typing_on")
     aviso = os.environ.get("MESSENGER_AVISO", "").strip()
@@ -187,3 +217,94 @@ async def estado(request: Request):
             "configurado": {"app_secret": bool(os.environ.get("META_APP_SECRET")),
                             "verify_token": bool(os.environ.get("MESSENGER_VERIFY_TOKEN")),
                             "paginas_con_token": list(_json_env("MESSENGER_PAGE_TOKENS").keys())}}
+
+
+# ── Páginas legales públicas (las exige Meta para publicar la app) ──────────────
+from fastapi.responses import HTMLResponse  # noqa: E402
+
+_EMPRESA = "Royalspace, LLC"
+_DIRECCION = "8206 Louisiana Blvd NE, Albuquerque, NM 87113, USA"
+_CORREO = os.environ.get("LEGAL_CONTACT_EMAIL") or "edwarilichreyes@gmail.com"
+_FECHA = "November 12, 2026"
+
+
+def _pagina(titulo: str, cuerpo: str) -> HTMLResponse:
+    return HTMLResponse(f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{titulo} — {_EMPRESA}</title>
+<style>body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:760px;margin:40px auto;
+padding:0 20px;line-height:1.6;color:#222}}h1{{font-size:1.6rem}}h2{{font-size:1.15rem;margin-top:1.8em}}
+hr{{margin:2.5em 0;border:0;border-top:1px solid #ddd}}small{{color:#666}}</style></head><body>
+<h1>{titulo}</h1><small>{_EMPRESA} · Last updated / Última actualización: {_FECHA}</small>{cuerpo}
+<hr><p><small>{_EMPRESA} · {_DIRECCION} · <a href="mailto:{_CORREO}">{_CORREO}</a></small></p></body></html>""")
+
+
+@router.get("/legal/privacy", response_class=HTMLResponse)
+async def privacidad():
+    return _pagina("Privacy Policy / Política de privacidad", f"""
+<h2>Who we are</h2><p>{_EMPRESA} operates Facebook Pages that help people find a dentist near them. When you message
+one of our Pages on Messenger, an automated assistant may answer your questions and invite you to call our phone line,
+where you are connected with a dental office in your area.</p>
+<h2>What we collect</h2><ul><li>Your messages to our Page and our replies.</li>
+<li>Your Page-scoped Messenger ID and the first name Messenger shares with us.</li>
+<li>Information you choose to give us, such as your ZIP code, city or the dental treatment you are interested in.</li></ul>
+<p>We do not ask for, and you should not send us, medical records, insurance numbers or payment information.</p>
+<h2>How we use it</h2><ul><li>To reply to your messages and help you find a dentist in your area.</li>
+<li>To keep the context of your conversation so you don't have to repeat yourself.</li>
+<li>To measure and improve our service.</li></ul>
+<p>Replies may be generated by an automated assistant (artificial intelligence). We do not sell your information and
+we do not use it for any purpose other than answering your inquiry.</p>
+<h2>Who we share it with</h2><p>Service providers that help us run the service (cloud hosting and an AI provider that
+generates replies), only to provide the service. Meta Platforms processes your messages as the operator of Messenger.</p>
+<h2>How long we keep it</h2><p>Conversation history is kept for up to 90 days and then deleted, unless you ask us to
+delete it sooner.</p>
+<h2>Your choices</h2><p>You can stop receiving messages at any time by writing "stop". To request a copy or deletion of
+your data, see our <a href="/legal/data-deletion">data deletion instructions</a> or email us at {_CORREO}.</p>
+<hr>
+<h2>Quiénes somos</h2><p>{_EMPRESA} opera páginas de Facebook que ayudan a las personas a encontrar un dentista cerca.
+Cuando escribes a una de nuestras páginas en Messenger, un asistente automatizado puede responder tus preguntas e
+invitarte a llamar a nuestra línea, donde te conectamos con una clínica dental de tu zona.</p>
+<h2>Qué datos recopilamos</h2><ul><li>Tus mensajes a la página y nuestras respuestas.</li>
+<li>Tu identificador de Messenger para esta página y el nombre que Messenger nos comparte.</li>
+<li>Lo que tú decidas contarnos, como tu código postal, ciudad o el tratamiento que te interesa.</li></ul>
+<p>No pedimos, y no debes enviarnos, historias médicas, números de seguro ni datos de pago.</p>
+<h2>Para qué los usamos</h2><p>Para responderte, ayudarte a encontrar un dentista en tu zona, mantener el contexto de
+la conversación y mejorar el servicio. Las respuestas pueden ser generadas por un asistente automatizado (inteligencia
+artificial). No vendemos tus datos.</p>
+<h2>Con quién los compartimos</h2><p>Solo con proveedores que nos ayudan a operar el servicio (alojamiento en la nube
+y un proveedor de IA que genera las respuestas). Meta procesa tus mensajes como operador de Messenger.</p>
+<h2>Cuánto tiempo los guardamos</h2><p>El historial se guarda hasta 90 días y luego se borra, salvo que pidas
+borrarlo antes.</p>
+<h2>Tus opciones</h2><p>Escribe "stop" para dejar de recibir mensajes. Para pedir una copia o el borrado de tus datos,
+sigue las <a href="/legal/data-deletion">instrucciones de borrado</a> o escríbenos a {_CORREO}.</p>""")
+
+
+@router.get("/legal/terms", response_class=HTMLResponse)
+async def condiciones():
+    return _pagina("Terms of Service / Condiciones del servicio", f"""
+<h2>The service</h2><p>Our Messenger assistant provides general information and helps you get in touch with dental
+offices by phone. It does not provide medical or dental advice, diagnosis or treatment, and it is not an emergency
+service. In a medical emergency, call 911.</p>
+<h2>No guarantees</h2><p>Availability, prices and appointments are set by each dental office. Replies may be automated
+and may contain mistakes; please confirm details directly with the office.</p>
+<h2>Acceptable use</h2><p>Do not use the service to send unlawful, abusive or spam content.</p>
+<h2>Contact</h2><p>{_EMPRESA}, {_DIRECCION}, {_CORREO}.</p>
+<hr>
+<h2>El servicio</h2><p>Nuestro asistente de Messenger da información general y te ayuda a comunicarte por teléfono con
+clínicas dentales. No ofrece consejo, diagnóstico ni tratamiento médico u odontológico, y no es un servicio de
+emergencias. En una emergencia médica, llama al 911.</p>
+<h2>Sin garantías</h2><p>La disponibilidad, los precios y las citas los define cada clínica. Las respuestas pueden ser
+automatizadas y contener errores; confirma los detalles directamente con la clínica.</p>
+<h2>Uso aceptable</h2><p>No uses el servicio para enviar contenido ilegal, abusivo o spam.</p>""")
+
+
+@router.get("/legal/data-deletion", response_class=HTMLResponse)
+async def borrado():
+    return _pagina("Data Deletion / Borrado de datos", f"""
+<h2>How to delete your data</h2><ol><li>Send a message to the same Page with the words <b>"delete my data"</b>, or</li>
+<li>email <a href="mailto:{_CORREO}">{_CORREO}</a> with the name of the Page you messaged and the approximate date.</li></ol>
+<p>We delete your conversation history and identifiers within 30 days and confirm by the same channel. You can also
+remove the conversation from your own Messenger at any time.</p>
+<hr>
+<h2>Cómo borrar tus datos</h2><ol><li>Escribe a la misma página <b>"borrar mis datos"</b>, o</li>
+<li>escríbenos a <a href="mailto:{_CORREO}">{_CORREO}</a> indicando la página y la fecha aproximada.</li></ol>
+<p>Borramos tu historial e identificadores en un máximo de 30 días y te lo confirmamos por el mismo medio.</p>""")
