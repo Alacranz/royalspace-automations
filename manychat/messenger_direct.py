@@ -35,6 +35,7 @@ import hmac
 import json
 import os
 import re
+import threading
 import time
 
 import requests
@@ -48,7 +49,6 @@ _cfg: dict = {}
 
 def configurar(responder, chat_request, get_conn) -> None:
     _cfg.update(responder=responder, chat_request=chat_request, get_conn=get_conn)
-    import threading
     threading.Thread(target=_revisar_tokens, daemon=True).start()
     with get_conn() as c:
         c.execute("""CREATE TABLE IF NOT EXISTS fb_eventos (
@@ -58,6 +58,12 @@ def configurar(responder, chat_request, get_conn) -> None:
         c.execute("""CREATE TABLE IF NOT EXISTS fb_estado (
             page_id TEXT, psid TEXT, pausado INTEGER DEFAULT 0, avisado INTEGER DEFAULT 0,
             PRIMARY KEY (page_id, psid))""")
+        for col in ("ult_usuario INTEGER DEFAULT 0", "recordatorios INTEGER DEFAULT 0", "idioma TEXT DEFAULT 'es'"):
+            try:
+                c.execute(f"ALTER TABLE fb_estado ADD COLUMN {col}")
+            except Exception:
+                pass  # ya existe
+    threading.Thread(target=_bucle_recordatorios, daemon=True).start()
 
 
 _ultima_purga = [0.0]
@@ -206,6 +212,82 @@ def _accion(page_id: str, psid: str, tipo: str) -> None:
             pass
 
 
+def _telefono(page_id: str, idioma: str) -> str:
+    """MESSENGER_PAGE_PHONES = {"<page_id>": "+18447750120"} o {"<page_id>": {"en": "+1…", "es": "+1…"}}."""
+    v = _json_env("MESSENGER_PAGE_PHONES").get(page_id)
+    if isinstance(v, dict):
+        v = v.get(idioma) or v.get("en") or v.get("es")
+    num = re.sub(r"\D", "", str(v or ""))
+    if len(num) == 10:
+        num = "1" + num
+    return f"+{num}" if len(num) == 11 else ""
+
+
+def _boton_llamar(page_id: str, psid: str, idioma: str, texto: str = "") -> bool:
+    """Tarjeta igual a la de ManyChat: '📞 CALL NOW' + botón con el número de ESA página."""
+    tel = _telefono(page_id, idioma)
+    if not tel:
+        print(f"[messenger] sin teléfono configurado para la página {page_id}: no envío botón", flush=True)
+        return False
+    token = _json_env("MESSENGER_PAGE_TOKENS").get(page_id)
+    titulo = f"({tel[2:5]}) {tel[5:8]}-{tel[8:]}"
+    cuerpo = texto or ("📞 LLAMA AHORA" if idioma == "es" else "📞 CALL NOW")
+    try:
+        r = requests.post(f"{GRAPH}/me/messages", params={"access_token": token}, timeout=15, json={
+            "recipient": {"id": psid}, "messaging_type": "RESPONSE",
+            "message": {"attachment": {"type": "template", "payload": {
+                "template_type": "button", "text": cuerpo[:640],
+                "buttons": [{"type": "phone_number", "title": titulo, "payload": tel}]}}}})
+    except Exception as e:
+        print(f"[messenger] error botón: {type(e).__name__}", flush=True)
+        return False
+    if r.status_code != 200:
+        print(f"[messenger] error botón ({r.status_code}): {r.text[:200]}", flush=True)
+    return r.status_code == 200
+
+
+_RECORDATORIOS = {
+    # (minutos desde el último mensaje de la persona, texto) — siempre dentro de la ventana de 24 h de Meta
+    "es": [(30, "¿Todavía buscas dentista? 🦷 Llámanos y te conectamos con uno cerca de ti. "
+                "Si al llamar escuchas un mensaje en inglés, presiona 1 para continuar."),
+           (22 * 60, "Solo para recordarte 😊 Seguimos aquí para ayudarte a encontrar dentista en tu zona. "
+                     "Toca el botón para llamar. Si escuchas un mensaje en inglés, presiona 1.")],
+    "en": [(30, "Still looking for a dentist? 🦷 Give us a call and we'll connect you with one near you."),
+           (22 * 60, "Just a quick reminder 😊 We're still here to help you find a dentist in your area. "
+                     "Tap the button to call.")],
+}
+
+
+def _bucle_recordatorios() -> None:
+    while True:
+        time.sleep(300)
+        try:
+            _enviar_recordatorios()
+        except Exception as e:
+            print(f"[messenger] error recordatorios: {type(e).__name__}", flush=True)
+
+
+def _enviar_recordatorios() -> None:
+    ahora = int(time.time())
+    with _cfg["get_conn"]() as c:
+        filas = c.execute("""SELECT page_id, psid, recordatorios, ult_usuario, idioma FROM fb_estado
+                             WHERE pausado = 0 AND ult_usuario > ? AND recordatorios < 2""",
+                          (ahora - 23 * 3600 - 1800,)).fetchall()
+    for page_id, psid, n, ult, idioma in filas:
+        if _modo(page_id) != "responder":
+            continue
+        idioma = idioma if idioma in _RECORDATORIOS else "es"
+        minutos, texto = _RECORDATORIOS[idioma][n]
+        if ahora - ult < minutos * 60 or ahora - ult > 23 * 3600 + 1800:
+            continue  # todavía no toca, o ya se cerró la ventana de 24 h
+        enviado = _boton_llamar(page_id, psid, idioma, texto)
+        with _cfg["get_conn"]() as c:
+            c.execute("UPDATE fb_estado SET recordatorios = ? WHERE page_id = ? AND psid = ?",
+                      (n + 1, page_id, psid))
+        print(f"[messenger] recordatorio {n + 1} a {hashlib.sha256(psid.encode()).hexdigest()[:8]} "
+              f"({idioma}) enviado={enviado}", flush=True)
+
+
 def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
     with _cfg["get_conn"]() as c:
         fila = c.execute("SELECT pausado, avisado FROM fb_estado WHERE page_id=? AND psid=?",
@@ -237,11 +319,17 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
     except Exception as e:
         print(f"[messenger] error de la IA: {type(e).__name__}", flush=True)
         return
+    idioma = res.get("language") if res.get("language") in ("en", "es") else "es"
     with _cfg["get_conn"]() as c:
-        c.execute("""INSERT INTO fb_estado (page_id, psid, pausado, avisado) VALUES (?,?,?,?)
-                     ON CONFLICT(page_id, psid) DO UPDATE SET pausado=excluded.pausado, avisado=excluded.avisado""",
-                  (page_id, psid, 1 if res.get("action") == "pause" else 0, 1 if aviso else 0))
+        c.execute("""INSERT INTO fb_estado (page_id, psid, pausado, avisado, ult_usuario, recordatorios, idioma)
+                     VALUES (?,?,?,?,?,0,?)
+                     ON CONFLICT(page_id, psid) DO UPDATE SET pausado=excluded.pausado, avisado=excluded.avisado,
+                       ult_usuario=excluded.ult_usuario, recordatorios=0, idioma=excluded.idioma""",
+                  (page_id, psid, 1 if res.get("action") == "pause" else 0, 1 if aviso else 0,
+                   int(time.time()), idioma))
     ok = _enviar(page_id, psid, res["response"]) if res.get("response") else None
+    if ok and res.get("action") == "respond":
+        _boton_llamar(page_id, psid, idioma)
     print(f"[messenger] {quien}: IA acción={res.get('action')} · {len(res.get('response') or '')} chars · "
           f"enviado={ok}", flush=True)
     _accion(page_id, psid, "typing_off")
