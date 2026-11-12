@@ -364,6 +364,16 @@ DONT_KNOW_ZIP_RE = re.compile(
 # Frases que indican que el ÚLTIMO mensaje del bot fue pidiendo el zip code —
 # usado para confirmar que un "no sé" del usuario se refiere específicamente
 # al código postal (y no a otra cosa) antes de disparar el flujo de ciudad/estado.
+MEDICAID_RE = re.compile(
+    r"(medicaid|medicare|medi-?cal|obamacare|plan del gobierno|seguro del (gobierno|estado)|seguro estatal"
+    r"|state insurance|government (insurance|plan)|insurance del estado)"
+)
+FUERA_USA_RE = re.compile(
+    r"(vivo en|estoy en|resido en|i live in|i'?m in|i am in|desde)\s+(venezuela|mexico|colombia|peru|ecuador|chile"
+    r"|argentina|honduras|guatemala|el salvador|nicaragua|cuba|republica dominicana|panama|costa rica|bolivia"
+    r"|paraguay|uruguay|brasil|brazil|espana|spain|canada|india|pakistan|nigeria|philippines|filipinas)\b"
+)
+
 NO_ANSWER_RE = re.compile(
     r"(nadie (me )?(contesta|contesto|responde|respondio|atiende|atendio)|no (me )?(contestan|contestaron|responden|respondieron|atienden|atendieron)"
     r"|no hay (clinicas|cobertura|dentistas)|no (tienen|hay) (nada )?(cerca|en mi area)|nobody (answer|pick)|no one (answer|pick)"
@@ -1089,11 +1099,28 @@ def responder(req: ChatRequest) -> dict:
     # pausar automatizaciones para que un media buyer le dé un código válido.
     action = "pause" if needs_handoff else "respond"
 
+    # Etiquetas para la bandeja de Business Suite (las aplica messenger_direct).
+    norm = normalize_text(text)
+    tags: list[str] = []
+    if is_pain:
+        tags.append("Urgencia / dolor")
+    if is_high_value:
+        tags.append("Alto valor")
+    if MEDICAID_RE.search(norm):
+        tags.append("Medicaid")
+    if FUERA_USA_RE.search(norm):
+        tags.append("Fuera de USA")
+    if wants_human:
+        pedidos_previos = sum(1 for h in history_full if h["role"] == "user" and is_requesting_human(h["content"]))
+        if pedidos_previos >= 1:
+            tags.append("Pide humano")
+
     return {
         "response":     reply,
         "action":       action,
         "detected_zip": detected_zip,
         "language":     final_lang,
+        "tags":         tags,
     }
 
 

@@ -500,6 +500,22 @@ def _etiquetar(page_id: str, psid: str, nombre: str) -> bool:
         return False
 
 
+def _etiquetar_una_vez(page_id: str, psid: str, nombre: str) -> bool:
+    with _cfg["get_conn"]() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS fb_etiquetado (page_id TEXT, psid TEXT, nombre TEXT, ts INTEGER, "
+                  "PRIMARY KEY (page_id, psid, nombre))")
+        if c.execute("SELECT 1 FROM fb_etiquetado WHERE page_id=? AND psid=? AND nombre=?",
+                     (page_id, psid, nombre)).fetchone():
+            return True
+    ok = _etiquetar(page_id, psid, nombre)
+    if ok:
+        with _cfg["get_conn"]() as c:
+            c.execute("INSERT OR IGNORE INTO fb_etiquetado VALUES (?,?,?,?)", (page_id, psid, nombre, int(time.time())))
+        print(f"[messenger] etiqueta '{nombre}' · página {page_id} · chat {hashlib.sha256(psid.encode()).hexdigest()[:8]}",
+              flush=True)
+    return ok
+
+
 def _pausa(res: dict) -> int:
     """1 = pidió que no le escriban (para siempre). Timestamp = pasado a un humano (la IA se aparta 24 h)."""
     if res.get("action") != "pause":
@@ -561,8 +577,10 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
                   (page_id, psid, _pausa(res), 1 if aviso else 0,
                    int(time.time()), idioma))
     ok = _enviar(page_id, psid, res["response"]) if res.get("response") else None
+    for nombre in res.get("tags") or []:
+        _etiquetar_una_vez(page_id, psid, nombre)
     if res.get("action") == "pause" and res.get("response"):
-        etiquetado = _etiquetar(page_id, psid, ETIQUETA_MANUAL)
+        etiquetado = _etiquetar_una_vez(page_id, psid, ETIQUETA_MANUAL)
         print(f"[messenger] NECESITA HUMANO · página {page_id} · chat {quien} · etiqueta={etiquetado}", flush=True)
     if ok and res.get("action") == "respond":
         _programar_tarjeta(page_id, psid, idioma)
