@@ -829,18 +829,22 @@ async def chat(req: ChatRequest, request: Request) -> JSONResponse:
     if MANYCHAT_WEBHOOK_SECRET:
         if request.headers.get("X-Webhook-Secret", "") != MANYCHAT_WEBHOOK_SECRET:
             raise HTTPException(status_code=401, detail="unauthorized")
+    return JSONResponse(responder(req))
 
+
+def responder(req: ChatRequest) -> dict:
+    """Cerebro del bot (sin autenticación): lo usan /chat (ManyChat) y /messenger/webhook (Meta directo)."""
     # Puede llegar como placeholder sin resolver ({{last_input_text}}) cuando el
     # trigger de ManyChat no tiene un mensaje real asociado (ej: evento de llamada).
     text = MANYCHAT_VAR_REGEX.sub("", req.last_input_text).strip()
 
     if not text:
-        return JSONResponse({"response": "", "action": "skip", "detected_zip": ""})
+        return {"response": "", "action": "skip", "detected_zip": ""}
 
     # ── Opt-out / enojo ───────────────────────────────────────────────────────
     if is_opt_out(text):
         save_message(req.subscriber_id, "user", text)
-        return JSONResponse({"response": "", "action": "pause", "detected_zip": ""})
+        return {"response": "", "action": "pause", "detected_zip": ""}
 
     # ── Historial y contexto ──────────────────────────────────────────────────
     history_full = get_history(req.subscriber_id)
@@ -1098,11 +1102,20 @@ async def chat(req: ChatRequest, request: Request) -> JSONResponse:
     # pausar automatizaciones para que un media buyer le dé un código válido.
     action = "pause" if needs_handoff else "respond"
 
-    return JSONResponse({
+    return {
         "response":     reply,
         "action":       action,
         "detected_zip": detected_zip,
-    })
+    }
+
+
+# Messenger directo (sin ManyChat) — ver manychat/messenger_direct.py
+try:
+    from manychat import messenger_direct  # noqa: E402  (uvicorn manychat.main:app)
+except ImportError:
+    import messenger_direct  # noqa: E402
+messenger_direct.configurar(responder=responder, chat_request=ChatRequest, get_conn=get_conn)
+app.include_router(messenger_direct.router)
 
 
 @app.get("/health")
