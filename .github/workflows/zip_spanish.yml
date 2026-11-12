@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: "17 11 * * *"
   workflow_dispatch:
+    inputs:
+      zips:
+        description: "ZIPs para agregar (separados por comas o espacios). Vacío = solo completar la hoja."
+        required: false
+        default: ""
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -25,4 +30,5 @@ jobs:
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           ZIP_SPREADSHEET_ID:          ${{ secrets.ZIP_SPREADSHEET_ID }}
+          ZIPS_NUEVOS:                 ${{ inputs.zips }}
         run: python profit/zip_spanish.py

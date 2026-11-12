@@ -81,6 +81,10 @@ def main() -> None:
     hoja = abrir()
     valores = hoja.get_all_values()
     zips, conocidos = leer_zips(valores)
+    # ZIPs que llegan por el formulario del workflow (Run workflow → zips): se suman a los de la hoja
+    for t in re.findall(r"\d+", os.environ.get("ZIPS_NUEVOS") or ""):
+        if 3 <= len(t) <= 5 and t.zfill(5) not in zips:
+            zips.append(t.zfill(5))
     if not zips:
         print(f"La pestaña '{TAB}' no tiene ZIPs.")
         return
