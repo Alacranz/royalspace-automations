@@ -465,6 +465,13 @@ def _enviar_recordatorios() -> None:
               f"({idioma}) enviado={enviado}", flush=True)
 
 
+def _pausa(res: dict) -> int:
+    """1 = pidió que no le escriban (para siempre). Timestamp = pasado a un humano (la IA se aparta 24 h)."""
+    if res.get("action") != "pause":
+        return 0
+    return int(time.time()) if res.get("response") else 1
+
+
 def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
     with _cfg["get_conn"]() as c:
         fila = c.execute("SELECT pausado, avisado FROM fb_estado WHERE page_id=? AND psid=?",
@@ -494,7 +501,7 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
     if _otra_app_reciente(page_id, psid):
         print(f"[messenger] {quien}: este chat lo atiende otra app (ManyChat) — no respondo", flush=True)
         return
-    if fila and fila[0]:
+    if fila and fila[0] and (fila[0] == 1 or time.time() - fila[0] < 24 * 3600):
         print(f"[messenger] {quien}: conversación pausada, no respondo", flush=True)
         return  # pidió que no le escriban
     if time.time() - _ultima_purga[0] > 86400:
@@ -516,9 +523,12 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
                      VALUES (?,?,?,?,?,0,?)
                      ON CONFLICT(page_id, psid) DO UPDATE SET pausado=excluded.pausado, avisado=excluded.avisado,
                        ult_usuario=excluded.ult_usuario, recordatorios=0, idioma=excluded.idioma""",
-                  (page_id, psid, 1 if res.get("action") == "pause" else 0, 1 if aviso else 0,
+                  (page_id, psid, _pausa(res), 1 if aviso else 0,
                    int(time.time()), idioma))
     ok = _enviar(page_id, psid, res["response"]) if res.get("response") else None
+    if res.get("action") == "pause" and res.get("response"):
+        print(f"[messenger] NECESITA HUMANO · página {page_id} · chat {quien} (dio su zip tras no poder comunicarse)",
+              flush=True)
     if ok and res.get("action") == "respond":
         _programar_tarjeta(page_id, psid, idioma)
     print(f"[messenger] {quien}: IA acción={res.get('action')} · {len(res.get('response') or '')} chars · "

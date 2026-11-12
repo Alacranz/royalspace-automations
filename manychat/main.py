@@ -87,8 +87,10 @@ TONE RULES:
 BEHAVIOR RULES:
 - READ THE FULL CONVERSATION HISTORY carefully before responding. If the user mentioned something before (a problem, a pain, that they called and no one answered, no coverage in their area), acknowledge it with empathy — never ignore prior context.
 - If this is a returning user (has prior conversation history from a previous session), open by warmly acknowledging you've spoken before.
-- If the user has not given their zip code, ask for it warmly. If they have sent 3 or more messages WITHOUT providing a zip code, be more direct: tell them you really need their zip code to find the closest dentist and help them — make it feel urgent and necessary.
-- IF THE USER SAYS THEY DON'T KNOW THEIR ZIP CODE (e.g., "no lo sé", "no me lo sé", "no lo sé cuál es", "no lo tengo", "don't know", "not sure", "no idea"): do NOT repeat the same zip request, and do NOT tell them to "give it when they call" — that makes no sense if they don't know it. Instead, warmly ask for their city and state so we can find the right area for them. Example (ES): "No hay problema, dime en qué ciudad y estado vives y te ayudamos a encontrar el código correcto." Example (EN): "No problem, just tell me your city and state and we'll help you find the right code."
+- LOCATION / ZIP CODE RULE (critical): Do NOT ask for the zip code in normal conversations. Our goal is to get them to CALL as fast as possible.
+  - If the user already told you a city, state, area or zip (even partial, like "Kansas City" or just a state) → do NOT ask anything else about location. Thank them and send them to call right away.
+  - If you don't know where they are, you may ask ONCE, simply: "¿En qué ciudad estás?" / "What city are you in?" — never ask twice, never ask for state or zip on top of a city, and never re-ask in other words. If they don't answer it, just send them to call.
+  - The ONLY time you ask for the zip code is when the user says nobody answered, they couldn't get through, or there are no clinics/coverage in their area (see that section below).
 - When asked about prices, insurance, payment plans, treatments, location, or any specific detail: briefly acknowledge and redirect them to call us because every office is different and we can give them exact, personalized information.
 - NEVER ask "¿Estás listo para llamar?" or "¿Te gustaría llamar?" or any variation. Never ask permission to call — just send them. If you have their location and/or treatment need, redirect to call immediately without asking if they're ready.
 - ONE QUESTION RULE: Never ask more than one question at a time. If you need info, ask only the single most important thing. Never stack two questions in one message.
@@ -123,8 +125,9 @@ INSURANCE — MEDICAID / GOVERNMENT PLANS (critical, never break):
   EN: "...Later in the call you'll be asked if you'll be applying with Medicaid or a government plan — answer 'No' or press 2 to continue."
 - Never skip this. Forgetting it, or confusing it with the language step, means the automated system disconnects the call and the lead is lost.
 
-WHEN USER SAYS NOBODY ANSWERED / CAN'T REACH US:
-- If the user says nobody answered, the line was busy, or they couldn't get through: empathize and encourage them to try again.
+WHEN USER SAYS NOBODY ANSWERED / CAN'T REACH US / NO CLINICS IN THEIR AREA:
+- If we do NOT have their zip code yet: empathize briefly and ask for their zip code so our team can find them another available option nearby. One short question, nothing else.
+- If we already have their zip code: empathize and encourage them to try again.
   Example (ES): "Entiendo, a veces hay espera. Intenta de nuevo en unos minutos — cuando llames, si escuchas un mensaje en inglés presiona 1 para continuar en español y alguien te atenderá."
   Example (EN): "I understand, sometimes there's a short wait. Please try again in a few minutes and someone will be able to help you."
   NEVER offer to call them back or ask for their number. NEVER mention pressing 1 in an English response.
@@ -361,6 +364,12 @@ DONT_KNOW_ZIP_RE = re.compile(
 # Frases que indican que el ÚLTIMO mensaje del bot fue pidiendo el zip code —
 # usado para confirmar que un "no sé" del usuario se refiere específicamente
 # al código postal (y no a otra cosa) antes de disparar el flujo de ciudad/estado.
+NO_ANSWER_RE = re.compile(
+    r"(nadie (me )?(contesta|contesto|responde|respondio|atiende|atendio)|no (me )?(contestan|contestaron|responden|respondieron|atienden|atendieron)"
+    r"|no hay (clinicas|cobertura|dentistas)|no (tienen|hay) (nada )?(cerca|en mi area)|nobody (answer|pick)|no one (answer|pick)"
+    r"|no answer|didn.?t answer|no coverage|no clinics|not available in my area|couldn.?t get through)"
+)
+
 ZIP_ASK_MARKERS = ["codigo postal", "zip code", "tu zip", "el zip"]
 
 HUMAN_AGENT_PHRASES = [
@@ -874,44 +883,26 @@ def responder(req: ChatRequest) -> dict:
     # tenga algo válido que marcar cuando la IVR se lo pida al llamar.
     approx_zip_note = ""
     needs_handoff   = False
-    if not detected_zip:
-        city_state = extract_city_state(text)
-        if city_state:
-            city, state_abbr = city_state
-            approx_zip = resolve_city_state_zip(city, state_abbr)
-            if approx_zip:
-                detected_zip = approx_zip
-                approx_zip_note = (
-                    f"APPROXIMATE ZIP FOUND: The user doesn't know their exact zip code, but gave "
-                    f"their city/state ({city}, {state_abbr}). We found an approximate zip code for "
-                    f"that area: {approx_zip}. Tell them clearly they can use THIS zip code "
-                    f"({approx_zip}) when the automated call system asks for one — mention it's an "
-                    f"approximate code for their area, not necessarily their exact home zip."
-                )
-            else:
-                needs_handoff = True
-                approx_zip_note = (
-                    f"CITY/STATE GIVEN BUT NO ZIP FOUND: The user gave their city/state "
-                    f"({city}, {state_abbr}) because they don't know their zip code, but we could not "
-                    f"automatically find an approximate zip for that area. Let them know warmly that "
-                    f"our team will follow up shortly with the right code for their area — do NOT "
-                    f"invent a zip code, and do NOT redirect them to call right now."
-                )
-        elif (
-            last_assistant_msg
-            and has_keyword(last_assistant_msg, ZIP_ASK_MARKERS)
-            and DONT_KNOW_ZIP_RE.search(normalize_text(text))
-        ):
-            # Detección determinística: nuestro último mensaje pidió el zip Y el
-            # usuario responde con una frase de "no sé" — no depende del criterio
-            # de Claude para reconocer typos/variantes informales.
-            approx_zip_note = (
-                "USER DOESN'T KNOW THEIR ZIP CODE (detected deterministically: our last message "
-                "asked for it, and their reply says they don't know it — even if informally or "
-                "misspelled). Do NOT repeat the zip request, and do NOT tell them to give it when "
-                "calling — that's illogical. Instead, warmly ask for their city and state so we can "
-                "find an approximate code for their area."
-            )
+    sin_respuesta = bool(NO_ANSWER_RE.search(normalize_text(text)))
+    pidio_zip_por_falla = bool(last_assistant_msg and has_keyword(last_assistant_msg, ZIP_ASK_MARKERS))
+    if extract_zip(text) and pidio_zip_por_falla:
+        # Nos dieron el zip después de decir que nadie contesta / no hay cobertura:
+        # el equipo sugiere otra opción a mano → la IA se aparta de este chat por 24 h.
+        needs_handoff = True
+        approx_zip_note = (
+            "HANDOFF: The user just gave their zip code after saying nobody answered or there was no coverage. "
+            "Thank them briefly and tell them our team will write back in a few minutes with the best option "
+            "for their area. Do NOT send them to call right now and do NOT ask anything else."
+        )
+    elif sin_respuesta:
+        approx_zip_note = (
+            "NO ANSWER / NO COVERAGE: The user says nobody answered, they couldn't get through, or there are "
+            "no clinics in their area. " + (
+                "We already have their zip — empathize and encourage them to try calling again in a few minutes."
+                if detected_zip else
+                "Empathize in one short sentence and ask ONLY for their zip code so our team can find another "
+                "available option near them. Do NOT send them to call in this message.")
+        )
 
     # ── Detectar tipo de mensaje ──────────────────────────────────────────────
     image_sent      = is_image_or_attachment(text)
@@ -974,12 +965,6 @@ def responder(req: ChatRequest) -> dict:
 
     if approx_zip_note:
         context_parts.append(approx_zip_note)
-    elif not detected_zip and user_msg_count >= MSGS_BEFORE_ZIP_INSIST and not _zip_in_history(history_full):
-        context_parts.append(
-            f"IMPORTANT: The user has sent {user_msg_count} messages WITHOUT providing a zip code. "
-            "Be more direct and insistent: you NEED their zip code to find the nearest dentist. "
-            "Make it feel urgent — you can't help them find a dentist without it."
-        )
 
     if is_pain:
         context_parts.append(
