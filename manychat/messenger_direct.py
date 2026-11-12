@@ -48,6 +48,8 @@ _cfg: dict = {}
 
 def configurar(responder, chat_request, get_conn) -> None:
     _cfg.update(responder=responder, chat_request=chat_request, get_conn=get_conn)
+    import threading
+    threading.Thread(target=_revisar_tokens, daemon=True).start()
     with get_conn() as c:
         c.execute("""CREATE TABLE IF NOT EXISTS fb_eventos (
             mid TEXT PRIMARY KEY, page_id TEXT, psid_hash TEXT, ts INTEGER,
@@ -71,6 +73,31 @@ def _purgar(c) -> None:
         except Exception:
             pass  # tabla todavía no creada (primer arranque)
     _ultima_purga[0] = time.time()
+
+
+def _revisar_tokens() -> None:
+    """Al arrancar: confirma en el log que cada token de página funciona (sin mostrar los tokens)."""
+    raw = os.environ.get("MESSENGER_PAGE_TOKENS")
+    if not raw:
+        print("[messenger] MESSENGER_PAGE_TOKENS vacío", flush=True)
+        return
+    tokens = _json_env("MESSENGER_PAGE_TOKENS")
+    if not tokens:
+        print("[messenger] MESSENGER_PAGE_TOKENS no es un JSON válido (revisa comillas y comas)", flush=True)
+        return
+    for pid, tok in tokens.items():
+        try:
+            r = requests.get(f"{GRAPH}/me", params={"fields": "id,name", "access_token": tok}, timeout=10)
+            d = r.json()
+            if r.status_code == 200 and str(d.get("id")) == pid:
+                print(f"[messenger] token OK {pid} {d.get('name')}", flush=True)
+            elif r.status_code == 200:
+                print(f"[messenger] token de OTRA página en {pid}: es de {d.get('id')} {d.get('name')}", flush=True)
+            else:
+                print(f"[messenger] token FALLA {pid}: {(d.get('error') or {}).get('message', r.status_code)}", flush=True)
+        except Exception as e:
+            print(f"[messenger] token FALLA {pid}: {type(e).__name__}", flush=True)
+    print(f"[messenger] {len(tokens)} páginas en el JSON; modos: {_json_env('MESSENGER_MODE') or 'todas en observar'}", flush=True)
 
 
 def _json_env(nombre: str) -> dict:
