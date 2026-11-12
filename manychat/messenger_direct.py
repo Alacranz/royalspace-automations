@@ -66,6 +66,7 @@ def configurar(responder, chat_request, get_conn, detectar_idioma=None) -> None:
                 pass  # ya existe
     threading.Thread(target=_bucle_recordatorios, daemon=True).start()
     threading.Thread(target=_bucle_oficina, daemon=True).start()
+    threading.Thread(target=_inventario_y_limpieza, daemon=True).start()
 
 
 _ultima_purga = [0.0]
@@ -128,6 +129,47 @@ def _tokens_desde_usuario() -> None:
         print(f"[messenger] tokens de página renovados desde META_USER_TOKEN: {n} de {len(nuestras)}", flush=True)
     except Exception as e:
         print(f"[messenger] error al renovar tokens: {type(e).__name__}", flush=True)
+
+
+# ── Limpieza de etiquetas de la bandeja (inventario y borrado SOLO con lista aprobada por Edwar) ──
+ETIQUETAS_NUESTRAS = {"Sugerir zip", "Pide humano", "Medicaid", "Fuera de USA", "Urgencia / dolor", "Alto valor",
+                      "Español", "Inglés"}
+
+
+def _etiquetas_de(page_id: str) -> list[dict]:
+    token, out, url = _token(page_id), [], f"{GRAPH}/me/custom_labels"
+    params = {"access_token": token, "fields": "page_label_name", "limit": 100}
+    while url and token:
+        r = requests.get(url, params=params, timeout=15)
+        d = r.json() or {}
+        if r.status_code != 200:
+            print(f"[messenger] etiquetas {page_id}: error {str(d.get('error', {}).get('message', ''))[:150]}", flush=True)
+            break
+        out += d.get("data", [])
+        url, params = (d.get("paging") or {}).get("next"), None
+    return out
+
+
+def _inventario_y_limpieza() -> None:
+    """MESSENGER_INVENTARIO_ETIQUETAS=1 → anota en el log cuántas etiquetas hay por página.
+    MESSENGER_BORRAR_ETIQUETAS=["Nombre", ...] → borra esas (nunca las nuestras)."""
+    borrar = set(json.loads(os.environ.get("MESSENGER_BORRAR_ETIQUETAS") or "[]")) - ETIQUETAS_NUESTRAS
+    if not (os.environ.get("MESSENGER_INVENTARIO_ETIQUETAS") or borrar):
+        return
+    time.sleep(20)
+    from collections import Counter
+    for pid, nombre in PAGINAS.items():
+        ets = _etiquetas_de(pid)
+        cuenta = Counter(e.get("page_label_name", "?") for e in ets)
+        print(f"[messenger] INVENTARIO {nombre}: {len(ets)} etiquetas · " +
+              " · ".join(f"{k}×{v}" for k, v in cuenta.most_common()), flush=True)
+        if borrar:
+            ok = fallo = 0
+            for e in ets:
+                if e.get("page_label_name") in borrar:
+                    r = requests.delete(f"{GRAPH}/{e['id']}", params={"access_token": _token(pid)}, timeout=15)
+                    ok, fallo = (ok + 1, fallo) if r.status_code == 200 else (ok, fallo + 1)
+            print(f"[messenger] LIMPIEZA {nombre}: borradas {ok}, fallaron {fallo}", flush=True)
 
 
 def _revisar_tokens() -> None:
