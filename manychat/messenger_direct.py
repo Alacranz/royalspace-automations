@@ -82,15 +82,59 @@ def _purgar(c) -> None:
     _ultima_purga[0] = time.time()
 
 
+def _tokens() -> dict:
+    """Tokens de página: los obtenidos con META_USER_TOKEN (guardados en la base) mandan sobre la variable."""
+    t = dict(_json_env("MESSENGER_PAGE_TOKENS"))
+    try:
+        with _cfg["get_conn"]() as c:
+            t.update({str(p): tok for p, tok in c.execute("SELECT page_id, token FROM fb_tokens").fetchall()})
+    except Exception:
+        pass
+    return t
+
+
+def _token(page_id: str) -> str | None:
+    return _tokens().get(page_id)
+
+
+def _tokens_desde_usuario() -> None:
+    """META_USER_TOKEN (de Graph API Explorer) → token de usuario de larga duración → tokens de página que no
+    vencen, con todos los permisos que tenga el usuario. Se guardan en la base (volumen), nunca en el log."""
+    ut = (os.environ.get("META_USER_TOKEN") or "").strip()
+    if not ut:
+        return
+    app_id = os.environ.get("META_APP_ID") or "1147303537768031"
+    try:
+        r = requests.get(f"{GRAPH}/oauth/access_token", timeout=15, params={
+            "grant_type": "fb_exchange_token", "client_id": app_id,
+            "client_secret": os.environ.get("META_APP_SECRET", ""), "fb_exchange_token": ut})
+        largo = (r.json() or {}).get("access_token") or ut
+        r = requests.get(f"{GRAPH}/me/accounts", timeout=15,
+                         params={"access_token": largo, "fields": "id,name,access_token", "limit": 100})
+        d = r.json() or {}
+        if r.status_code != 200:
+            print(f"[messenger] META_USER_TOKEN no sirvió: {str(d.get('error', {}).get('message', ''))[:150]}", flush=True)
+            return
+        nuestras = set(_json_env("MESSENGER_PAGE_PHONES")) | set(_json_env("MESSENGER_PAGE_TOKENS"))
+        n = 0
+        with _cfg["get_conn"]() as c:
+            c.execute("CREATE TABLE IF NOT EXISTS fb_tokens (page_id TEXT PRIMARY KEY, token TEXT, ts INTEGER)")
+            for p in d.get("data", []):
+                if str(p.get("id")) in nuestras and p.get("access_token"):
+                    c.execute("INSERT OR REPLACE INTO fb_tokens (page_id, token, ts) VALUES (?,?,?)",
+                              (str(p["id"]), p["access_token"], int(time.time())))
+                    n += 1
+        print(f"[messenger] tokens de página renovados desde META_USER_TOKEN: {n} de {len(nuestras)}", flush=True)
+    except Exception as e:
+        print(f"[messenger] error al renovar tokens: {type(e).__name__}", flush=True)
+
+
 def _revisar_tokens() -> None:
     """Al arrancar: confirma en el log que cada token de página funciona (sin mostrar los tokens)."""
-    raw = os.environ.get("MESSENGER_PAGE_TOKENS")
-    if not raw:
-        print("[messenger] MESSENGER_PAGE_TOKENS vacío", flush=True)
-        return
-    tokens = _json_env("MESSENGER_PAGE_TOKENS")
+    _tokens_desde_usuario()
+    tokens = _tokens()
     if not tokens:
-        print("[messenger] MESSENGER_PAGE_TOKENS no es un JSON válido (revisa comillas y comas)", flush=True)
+        print("[messenger] sin tokens de página (MESSENGER_PAGE_TOKENS vacío o JSON inválido)", flush=True)
         return
     app_id = os.environ.get("META_APP_ID") or "1147303537768031"  # Royalspace Messenger (no es secreto)
     app_tok = f"{app_id}|{os.environ.get('META_APP_SECRET', '')}"
@@ -229,7 +273,7 @@ def _registrar(mid: str, page_id: str, psid: str) -> bool:
 
 
 def _enviar(page_id: str, psid: str, texto: str) -> bool:
-    token = _json_env("MESSENGER_PAGE_TOKENS").get(page_id)
+    token = _token(page_id)
     if not token:
         print(f"[messenger] sin token para la página {page_id}", flush=True)
         return False
@@ -245,7 +289,7 @@ def _enviar(page_id: str, psid: str, texto: str) -> bool:
 
 
 def _accion(page_id: str, psid: str, tipo: str) -> None:
-    token = _json_env("MESSENGER_PAGE_TOKENS").get(page_id)
+    token = _token(page_id)
     if token:
         try:
             requests.post(f"{GRAPH}/me/messages", params={"access_token": token}, timeout=5,
@@ -271,7 +315,7 @@ def _boton_llamar(page_id: str, psid: str, idioma: str, texto: str = "") -> bool
     if not tel:
         print(f"[messenger] sin teléfono configurado para la página {page_id}: no envío botón", flush=True)
         return False
-    token = _json_env("MESSENGER_PAGE_TOKENS").get(page_id)
+    token = _token(page_id)
     titulo = f"({tel[2:5]}) {tel[5:8]}-{tel[8:]}"
     cuerpo = texto or ("📞 LLAMA AHORA\nSi al llamar escuchas un mensaje en inglés, presiona 1 para continuar."
                        if idioma == "es" else "📞 CALL NOW")
@@ -357,7 +401,7 @@ def _comentario(page_id: str, v: dict) -> None:
     print(f"[messenger] comentario en página {page_id} ({idioma}) · modo {modo}", flush=True)
     if modo != "responder":
         return
-    token = _json_env("MESSENGER_PAGE_TOKENS").get(page_id)
+    token = _token(page_id)
     tel = _telefono(page_id, idioma)
     if not token or not tel:
         print(f"[messenger] comentario sin token o teléfono para {page_id}", flush=True)
@@ -496,7 +540,7 @@ async def estado(request: Request):
                          "modo": _modo(f[0])} for f in filas],
             "configurado": {"app_secret": bool(os.environ.get("META_APP_SECRET")),
                             "verify_token": bool(os.environ.get("MESSENGER_VERIFY_TOKEN")),
-                            "paginas_con_token": list(_json_env("MESSENGER_PAGE_TOKENS").keys())}}
+                            "paginas_con_token": list(_tokens().keys())}}
 
 
 # ── Páginas legales públicas (las exige Meta para publicar la app) ──────────────
