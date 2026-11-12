@@ -87,14 +87,15 @@ def _revisar_tokens() -> None:
         return
     for pid, tok in tokens.items():
         try:
-            r = requests.get(f"{GRAPH}/me", params={"fields": "id,name", "access_token": tok}, timeout=10)
+            # subscribed_apps solo necesita pages_manage_metadata (incluido en el caso de uso de Messenger)
+            r = requests.get(f"{GRAPH}/me/subscribed_apps", params={"access_token": tok}, timeout=10)
             d = r.json()
-            if r.status_code == 200 and str(d.get("id")) == pid:
-                print(f"[messenger] token OK {pid} {d.get('name')}", flush=True)
-            elif r.status_code == 200:
-                print(f"[messenger] token de OTRA página en {pid}: es de {d.get('id')} {d.get('name')}", flush=True)
+            if r.status_code == 200:
+                apps = ", ".join(a.get("name", "?") for a in d.get("data", []))
+                print(f"[messenger] token OK {pid} · apps suscritas: {apps}", flush=True)
             else:
-                print(f"[messenger] token FALLA {pid}: {(d.get('error') or {}).get('message', r.status_code)}", flush=True)
+                err = d.get("error") or {}
+                print(f"[messenger] token FALLA {pid}: código {err.get('code')} {err.get('message', '')[:90]}", flush=True)
         except Exception as e:
             print(f"[messenger] token FALLA {pid}: {type(e).__name__}", flush=True)
     print(f"[messenger] {len(tokens)} páginas en el JSON; modos: {_json_env('MESSENGER_MODE') or 'todas en observar'}", flush=True)
