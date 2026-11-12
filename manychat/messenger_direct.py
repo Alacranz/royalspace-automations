@@ -260,7 +260,8 @@ def _boton_llamar(page_id: str, psid: str, idioma: str, texto: str = "") -> bool
         return False
     token = _json_env("MESSENGER_PAGE_TOKENS").get(page_id)
     titulo = f"({tel[2:5]}) {tel[5:8]}-{tel[8:]}"
-    cuerpo = texto or ("📞 LLAMA AHORA" if idioma == "es" else "📞 CALL NOW")
+    cuerpo = texto or ("📞 LLAMA AHORA\nSi al llamar escuchas un mensaje en inglés, presiona 1 para continuar."
+                       if idioma == "es" else "📞 CALL NOW")
     try:
         r = requests.post(f"{GRAPH}/me/messages", params={"access_token": token}, timeout=15, json={
             "recipient": {"id": psid}, "messaging_type": "RESPONSE",
