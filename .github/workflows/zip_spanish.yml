@@ -1,0 +1,28 @@
+name: Profit — ZIP Spanish (ciudad y estado)
+
+# Completa la pestaña "Spanish" del sheet de ZIPs con City y State.
+# Correr a mano (Actions → Run workflow) después de pegar un listado nuevo;
+# además corre una vez al día por si se agregaron ZIPs.
+on:
+  schedule:
+    - cron: "17 11 * * *"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  zip-spanish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r profit/requirements.txt
+      - name: Completar ciudad y estado
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          ZIP_SPREADSHEET_ID:          ${{ secrets.ZIP_SPREADSHEET_ID }}
+        run: python profit/zip_spanish.py
