@@ -47,8 +47,9 @@ GRAPH = f"https://graph.facebook.com/{os.environ.get('META_API_VERSION') or 'v25
 _cfg: dict = {}
 
 
-def configurar(responder, chat_request, get_conn) -> None:
-    _cfg.update(responder=responder, chat_request=chat_request, get_conn=get_conn)
+def configurar(responder, chat_request, get_conn, detectar_idioma=None) -> None:
+    _cfg.update(responder=responder, chat_request=chat_request, get_conn=get_conn,
+                detectar_idioma=detectar_idioma)
     threading.Thread(target=_revisar_tokens, daemon=True).start()
     with get_conn() as c:
         c.execute("""CREATE TABLE IF NOT EXISTS fb_eventos (
@@ -93,7 +94,7 @@ def _revisar_tokens() -> None:
         return
     app_id = os.environ.get("META_APP_ID") or "1147303537768031"  # Royalspace Messenger (no es secreto)
     app_tok = f"{app_id}|{os.environ.get('META_APP_SECRET', '')}"
-    necesarios = {"pages_messaging", "pages_manage_metadata"}
+    necesarios = {"pages_messaging", "pages_manage_metadata", "pages_read_engagement", "pages_manage_engagement"}
     for pid, tok in tokens.items():
         try:
             r = requests.get(f"{GRAPH}/debug_token",
@@ -111,6 +112,13 @@ def _revisar_tokens() -> None:
             print(f"[messenger] token {estado} {pid} · tipo {d.get('type')} · app_ok={app_ok} · "
                   f"pagina_ok={pagina_ok} · vence={d.get('expires_at') or 0} · "
                   f"faltan={','.join(faltan) or '-'} · permisos={','.join(sorted(scopes))}", flush=True)
+            if "pages_manage_metadata" in scopes:
+                # Asegura que la página mande a la app mensajes, ecos y comentarios (feed).
+                r2 = requests.post(f"{GRAPH}/{pid}/subscribed_apps", params={"access_token": tok}, timeout=10,
+                                   data={"subscribed_fields": "messages,messaging_postbacks,messaging_handovers,"
+                                                              "message_echoes,messaging_policy_enforcement,feed"})
+                print(f"[messenger] suscripción de la página {pid}: "
+                      f"{'ok' if r2.status_code == 200 else r2.text[:150]}", flush=True)
         except Exception as e:
             print(f"[messenger] token FALLA {pid}: {type(e).__name__}", flush=True)
     print(f"[messenger] {len(tokens)} páginas en el JSON; modos: {_json_env('MESSENGER_MODE') or 'todas en observar'}", flush=True)
@@ -154,6 +162,11 @@ async def recibir(request: Request, tareas: BackgroundTasks):
         return {"ok": True}
     for entry in data.get("entry", []):
         page_id = str(entry.get("id"))
+        for cambio in entry.get("changes", []):
+            if cambio.get("field") == "feed":
+                v = cambio.get("value") or {}
+                if v.get("item") == "comment" and v.get("verb") == "add":
+                    tareas.add_task(_comentario, page_id, v)
         eventos = [(ev, "messaging") for ev in entry.get("messaging", [])] + \
                   [(ev, "standby") for ev in entry.get("standby", [])]
         for ev, canal in eventos:
@@ -305,6 +318,68 @@ def _mandar_tarjeta(page_id: str, psid: str, idioma: str) -> None:
     if _boton_llamar(page_id, psid, idioma):
         with _cfg["get_conn"]() as c:
             c.execute("UPDATE fb_estado SET tarjeta=? WHERE page_id=? AND psid=?", (int(time.time()), page_id, psid))
+
+
+# ── Comentarios en publicaciones y anuncios (reemplaza "Comentarios Auto-Respuesta" de ManyChat) ──
+_COMENTARIOS = {
+    "es": ["Si estamos disponibles. Puedes llamarnos ahora para ver su caso y con gusto te ayudaremos con tu problema dental.",
+           "Si tenemos clinicas en todo el Pais. 📞 No dudes en llamarnos, con gusto te proporcionaremos toda la información y asistencia necesaria.",
+           "Tenemos clinicas en todo el area. Puedes llamarnos ahora para ver su caso y con gusto te ayudaremos con tu problema dental.",
+           "Hola tenemos clinicas cercanas a tu ubicacion. Llamanos y con gusto te conectaremos con la clinica mas cercana a tu ubicacion."],
+    "en": ["Yes, we're available! Call us now so we can review your case and gladly help with your dental problem.",
+           "We have clinics all over the country. 📞 Give us a call and we'll gladly provide all the information and help you need.",
+           "We have clinics all around your area. Call us now so we can review your case and help with your dental problem.",
+           "Hi! We have clinics near your location. Call us and we'll gladly connect you with the closest clinic."],
+}
+_CIERRE = {"es": "al llamar por favor ingresa tu código postal, presione 1 y espera en la línea",
+           "en": "when you call, please enter your zip code and stay on the line"}
+
+
+def _modo_comentarios(page_id: str) -> str:
+    return _json_env("MESSENGER_COMENTARIOS").get(page_id, "observar")
+
+
+def _comentario(page_id: str, v: dict) -> None:
+    cid = str(v.get("comment_id") or "")
+    autor = v.get("from") or {}
+    if not cid or str(autor.get("id")) == page_id:
+        return  # respuestas de la propia página
+    if v.get("parent_id") and v.get("post_id") and v["parent_id"] != v["post_id"]:
+        return  # solo comentarios de primer nivel (igual que ManyChat)
+    if not _registrar(f"c:{cid}", page_id, str(autor.get("id") or cid)):
+        return  # Meta reenvió el mismo comentario
+    texto = (v.get("message") or "").strip()
+    det = _cfg.get("detectar_idioma")
+    idioma = "es"
+    try:
+        idioma = det(texto) if det and texto else "es"
+    except Exception:
+        pass
+    idioma = idioma if idioma in ("en", "es") else "es"
+    modo = _modo_comentarios(page_id)
+    print(f"[messenger] comentario en página {page_id} ({idioma}) · modo {modo}", flush=True)
+    if modo != "responder":
+        return
+    token = _json_env("MESSENGER_PAGE_TOKENS").get(page_id)
+    tel = _telefono(page_id, idioma)
+    if not token or not tel:
+        print(f"[messenger] comentario sin token o teléfono para {page_id}", flush=True)
+        return
+    visible = f"({tel[2:5]}) {tel[5:8]}-{tel[8:]}"
+    import random
+    publico = f"{random.choice(_COMENTARIOS[idioma])}\n{visible}\n{_CIERRE[idioma]}"
+    r1 = requests.post(f"{GRAPH}/{cid}/comments", params={"access_token": token}, timeout=15,
+                       data={"message": publico})
+    r2 = requests.post(f"{GRAPH}/{cid}/likes", params={"access_token": token}, timeout=15)
+    nombre = str(autor.get("name") or "").split(" ")[0]
+    saludo = (f"Hola {nombre}, ¡podemos ayudarte! 📞" if idioma == "es" else f"Hi {nombre}, we can help! 📞").replace("  ", " ")
+    r3 = requests.post(f"{GRAPH}/me/messages", params={"access_token": token}, timeout=15, json={
+        "recipient": {"comment_id": cid}, "message": {"attachment": {"type": "template", "payload": {
+            "template_type": "button", "text": saludo,
+            "buttons": [{"type": "phone_number", "title": visible, "payload": tel}]}}}})
+    def res(r):
+        return "ok" if r.status_code == 200 else f"error {r.status_code}: {r.text[:120]}"
+    print(f"[messenger] comentario respondido · público {res(r1)} · like {res(r2)} · privado {res(r3)}", flush=True)
 
 
 _RECORDATORIOS = {

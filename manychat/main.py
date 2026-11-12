@@ -1115,7 +1115,8 @@ try:
     from manychat import messenger_direct  # noqa: E402  (uvicorn manychat.main:app)
 except ImportError:
     import messenger_direct  # noqa: E402
-messenger_direct.configurar(responder=responder, chat_request=ChatRequest, get_conn=get_conn)
+messenger_direct.configurar(responder=responder, chat_request=ChatRequest, get_conn=get_conn,
+                            detectar_idioma=detect_language)
 app.include_router(messenger_direct.router)
 
 
