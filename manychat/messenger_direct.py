@@ -85,17 +85,26 @@ def _revisar_tokens() -> None:
     if not tokens:
         print("[messenger] MESSENGER_PAGE_TOKENS no es un JSON válido (revisa comillas y comas)", flush=True)
         return
+    app_id = os.environ.get("META_APP_ID") or "1147303537768031"  # Royalspace Messenger (no es secreto)
+    app_tok = f"{app_id}|{os.environ.get('META_APP_SECRET', '')}"
+    necesarios = {"pages_messaging", "pages_manage_metadata"}
     for pid, tok in tokens.items():
         try:
-            # subscribed_apps solo necesita pages_manage_metadata (incluido en el caso de uso de Messenger)
-            r = requests.get(f"{GRAPH}/me/subscribed_apps", params={"access_token": tok}, timeout=10)
-            d = r.json()
-            if r.status_code == 200:
-                apps = ", ".join(a.get("name", "?") for a in d.get("data", []))
-                print(f"[messenger] token OK {pid} · apps suscritas: {apps}", flush=True)
-            else:
-                err = d.get("error") or {}
-                print(f"[messenger] token FALLA {pid}: código {err.get('code')} {err.get('message', '')[:90]}", flush=True)
+            r = requests.get(f"{GRAPH}/debug_token",
+                             params={"input_token": tok, "access_token": app_tok}, timeout=10)
+            d = (r.json() or {}).get("data") or {}
+            if not d.get("is_valid"):
+                err = (d.get("error") or r.json().get("error") or {})
+                print(f"[messenger] token FALLA {pid}: inválido · {str(err.get('message', ''))[:90]}", flush=True)
+                continue
+            scopes = set(d.get("scopes") or [])
+            faltan = sorted(necesarios - scopes)
+            pagina_ok = str(d.get("profile_id") or pid) == pid
+            app_ok = str(d.get("app_id")) == app_id
+            estado = "OK" if not faltan and pagina_ok and app_ok else "INCOMPLETO"
+            print(f"[messenger] token {estado} {pid} · tipo {d.get('type')} · app_ok={app_ok} · "
+                  f"pagina_ok={pagina_ok} · vence={d.get('expires_at') or 0} · "
+                  f"faltan={','.join(faltan) or '-'} · permisos={','.join(sorted(scopes))}", flush=True)
         except Exception as e:
             print(f"[messenger] token FALLA {pid}: {type(e).__name__}", flush=True)
     print(f"[messenger] {len(tokens)} páginas en el JSON; modos: {_json_env('MESSENGER_MODE') or 'todas en observar'}", flush=True)
