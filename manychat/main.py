@@ -1121,6 +1121,7 @@ def responder(req: ChatRequest) -> dict:
         "detected_zip": detected_zip,
         "language":     final_lang,
         "tags":         tags,
+        "language_source": _lang_source,
     }
 
 

@@ -516,6 +516,23 @@ def _etiquetar_una_vez(page_id: str, psid: str, nombre: str) -> bool:
     return ok
 
 
+ETIQUETAS_IDIOMA = {"es": "Español", "en": "Inglés"}
+
+
+def _etiqueta_idioma(page_id: str, psid: str, res: dict) -> None:
+    """Una sola etiqueta de idioma por chat, y solo cuando el idioma se detectó con seguridad."""
+    lang = res.get("language")
+    if lang not in ETIQUETAS_IDIOMA or res.get("language_source") == "default":
+        return
+    with _cfg["get_conn"]() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS fb_etiquetado (page_id TEXT, psid TEXT, nombre TEXT, ts INTEGER, "
+                  "PRIMARY KEY (page_id, psid, nombre))")
+        ya = c.execute("SELECT 1 FROM fb_etiquetado WHERE page_id=? AND psid=? AND nombre IN (?,?)",
+                       (page_id, psid, *ETIQUETAS_IDIOMA.values())).fetchone()
+    if not ya:
+        _etiquetar_una_vez(page_id, psid, ETIQUETAS_IDIOMA[lang])
+
+
 def _pausa(res: dict) -> int:
     """1 = pidió que no le escriban (para siempre). Timestamp = pasado a un humano (la IA se aparta 24 h)."""
     if res.get("action") != "pause":
@@ -579,6 +596,7 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
     ok = _enviar(page_id, psid, res["response"]) if res.get("response") else None
     for nombre in res.get("tags") or []:
         _etiquetar_una_vez(page_id, psid, nombre)
+    _etiqueta_idioma(page_id, psid, res)
     if res.get("action") == "pause" and res.get("response"):
         etiquetado = _etiquetar_una_vez(page_id, psid, ETIQUETA_MANUAL)
         print(f"[messenger] NECESITA HUMANO · página {page_id} · chat {quien} · etiqueta={etiquetado}", flush=True)
