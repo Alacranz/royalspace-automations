@@ -2,7 +2,7 @@
 ZIP Spanish — completa la pestaña "Spanish" del sheet de ZIPs con Ciudad y Estado.
 
 Edwar pega en la pestaña "Spanish" el listado de ZIPs con cobertura en español
-(p. ej. el que manda Aragon) — en cualquier columna, con o sin encabezado, uno por
+— en cualquier columna, con o sin encabezado, uno por
 celda o varios separados por comas/espacios. Este script:
   1. Lee todos los ZIPs de la pestaña (rellena el 0 inicial que Sheets quita: 1234 → 01234)
   2. Busca Ciudad/Estado en api.zippopotam.us (igual que zip_report.py); los que ya

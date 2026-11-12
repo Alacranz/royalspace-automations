@@ -167,7 +167,7 @@ royalspace-automations/
 
 ### ZIPs en español (desde 2026-11-12)
 - `profit/zip_spanish.py` + `zip_spanish.yml` (a mano o diario 11:17 UTC): lee la pestaña `Spanish` del sheet de ZIPs
-  (`ZIP_SPREADSHEET_ID`), donde Edwar pega los ZIPs con cobertura en español (p. ej. listado de Aragon), y la
+  (`ZIP_SPREADSHEET_ID`), donde Edwar pega los ZIPs con cobertura en español, y la
   reescribe como `Zipcode | City | State` (zippopotam.us, como `zip_report.py`) ordenada por estado, con resumen
   `State | ZIPs` en E:F. No vuelve a buscar los que ya tienen ciudad.
 
