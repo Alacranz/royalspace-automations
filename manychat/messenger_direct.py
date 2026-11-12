@@ -161,7 +161,8 @@ async def recibir(request: Request, tareas: BackgroundTasks):
                 texto = "[imagen o archivo adjunto]"
             if not psid or not _registrar(mid, page_id, psid):
                 continue  # reenvío de Meta: ya lo procesamos
-            print(f"[messenger] evento {canal} página {page_id} · modo {_modo(page_id)}", flush=True)
+            print(f"[messenger] evento {canal} página {page_id} · de {hashlib.sha256(psid.encode()).hexdigest()[:8]} · "
+                  f"modo {_modo(page_id)}", flush=True)
             # standby = otra app (ManyChat) controla la conversación: solo observamos, nunca respondemos
             if canal == "messaging" and _modo(page_id) == "responder":
                 tareas.add_task(_contestar, page_id, psid, texto, mid)
@@ -219,7 +220,9 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
         _enviar(page_id, psid, "Listo, borramos tu historial de conversación con nosotros." if es
                 else "Done — we deleted your conversation history with us.")
         return
+    quien = hashlib.sha256(psid.encode()).hexdigest()[:8]
     if fila and fila[0]:
+        print(f"[messenger] {quien}: conversación pausada, no respondo", flush=True)
         return  # pidió que no le escriban
     if time.time() - _ultima_purga[0] > 86400:
         with _cfg["get_conn"]() as c:
@@ -238,8 +241,9 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
         c.execute("""INSERT INTO fb_estado (page_id, psid, pausado, avisado) VALUES (?,?,?,?)
                      ON CONFLICT(page_id, psid) DO UPDATE SET pausado=excluded.pausado, avisado=excluded.avisado""",
                   (page_id, psid, 1 if res.get("action") == "pause" else 0, 1 if aviso else 0))
-    if res.get("response"):
-        _enviar(page_id, psid, res["response"])
+    ok = _enviar(page_id, psid, res["response"]) if res.get("response") else None
+    print(f"[messenger] {quien}: IA acción={res.get('action')} · {len(res.get('response') or '')} chars · "
+          f"enviado={ok}", flush=True)
     _accion(page_id, psid, "typing_off")
 
 
