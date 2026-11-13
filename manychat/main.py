@@ -1134,6 +1134,14 @@ messenger_direct.configurar(responder=responder, chat_request=ChatRequest, get_c
                             detectar_idioma=detect_language)
 app.include_router(messenger_direct.router)
 
+try:
+    from manychat import gastos
+except ImportError:
+    import gastos
+gastos.configurar(get_conn=get_conn, base_url="https://" + (os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+                                                            or "royalspace-automations-production.up.railway.app"))
+app.include_router(gastos.router)
+
 
 @app.get("/health")
 async def health() -> dict:
