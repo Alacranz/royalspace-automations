@@ -69,6 +69,7 @@ def configurar(responder, chat_request, get_conn, detectar_idioma=None, abierto=
     threading.Thread(target=_bucle_recordatorios, daemon=True).start()
     threading.Thread(target=_bucle_oficina, daemon=True).start()
     threading.Thread(target=_inventario_y_limpieza, daemon=True).start()
+    threading.Thread(target=_crear_etiquetas_base, daemon=True).start()
 
 
 _ultima_purga = [0.0]
@@ -150,6 +151,37 @@ def _etiquetas_de(page_id: str) -> list[dict]:
         out += d.get("data", [])
         url, params = (d.get("paging") or {}).get("next"), None
     return out
+
+
+def _crear_etiquetas_base() -> None:
+    """Deja creadas nuestras etiquetas en las 9 páginas para que aparezcan en el filtro de Business Suite."""
+    time.sleep(40)
+    for pid, nombre in PAGINAS.items():
+        token = _token(pid)
+        if not token:
+            continue
+        try:
+            existentes = {e.get("page_label_name"): e["id"] for e in _etiquetas_de(pid)}
+            creadas, fallas = 0, []
+            for et in sorted(ETIQUETAS_NUESTRAS):
+                eid = existentes.get(et)
+                if not eid:
+                    r = requests.post(f"{GRAPH}/me/custom_labels", params={"access_token": token}, timeout=20,
+                                      json={"page_label_name": et})
+                    eid = (r.json() or {}).get("id")
+                    if eid:
+                        creadas += 1
+                    else:
+                        fallas.append(f"{et}: {r.text[:100]}")
+                        continue
+                with _cfg["get_conn"]() as c:
+                    c.execute("CREATE TABLE IF NOT EXISTS fb_etiquetas (page_id TEXT, nombre TEXT, id TEXT, "
+                              "PRIMARY KEY (page_id, nombre))")
+                    c.execute("INSERT OR REPLACE INTO fb_etiquetas VALUES (?,?,?)", (pid, et, str(eid)))
+            print(f"[messenger] etiquetas base {nombre}: {len(ETIQUETAS_NUESTRAS) - len(fallas)} listas "
+                  f"({creadas} nuevas){' · fallas: ' + ' | '.join(fallas) if fallas else ''}", flush=True)
+        except Exception as e:
+            print(f"[messenger] etiquetas base {nombre}: {type(e).__name__}", flush=True)
 
 
 def _inventario_y_limpieza() -> None:
