@@ -690,7 +690,7 @@ def _enviar_recordatorios() -> None:
 ETIQUETA_MANUAL = os.environ.get("MESSENGER_ETIQUETA_MANUAL") or "Sugerir zip"
 
 
-def _etiquetar(page_id: str, psid: str, nombre: str) -> bool:
+def _etiquetar(page_id: str, psid: str, nombre: str, reintento: bool = True) -> bool:
     """Pone una etiqueta de la bandeja de Meta Business Suite al chat (para filtrarlo y atenderlo a mano)."""
     token = _token(page_id)
     if not token:
@@ -713,9 +713,14 @@ def _etiquetar(page_id: str, psid: str, nombre: str) -> bool:
                     return False
             with _cfg["get_conn"]() as c:
                 c.execute("INSERT OR REPLACE INTO fb_etiquetas VALUES (?,?,?)", (page_id, nombre, str(eid)))
-        r = requests.post(f"{GRAPH}/{eid}/label", params={"access_token": token}, timeout=10, json={"user": psid})
+        r = requests.post(f"{GRAPH}/{eid}/label", params={"access_token": token}, timeout=20, json={"user": psid})
+        if r.status_code != 200 and reintento and '"code":100' in r.text.replace(" ", ""):
+            # El id guardado ya no existe o es de otra configuración: lo olvidamos y lo buscamos/creamos de nuevo.
+            with _cfg["get_conn"]() as c:
+                c.execute("DELETE FROM fb_etiquetas WHERE page_id=? AND nombre=?", (page_id, nombre))
+            return _etiquetar(page_id, psid, nombre, reintento=False)
         if r.status_code != 200:
-            print(f"[messenger] no pude etiquetar en {page_id}: {r.text[:200]}", flush=True)
+            print(f"[messenger] no pude etiquetar '{nombre}' en {page_id}: {r.text[:200]}", flush=True)
         return r.status_code == 200
     except Exception as e:
         print(f"[messenger] error etiqueta: {type(e).__name__}", flush=True)
@@ -744,7 +749,14 @@ ETIQUETAS_IDIOMA = {"es": "Español", "en": "Inglés"}
 def _etiqueta_idioma(page_id: str, psid: str, res: dict) -> None:
     """Una sola etiqueta de idioma por chat, y solo cuando el idioma se detectó con seguridad."""
     lang = res.get("language")
-    if lang not in ETIQUETAS_IDIOMA or res.get("language_source") == "default":
+    if res.get("language_source") == "default" or lang not in ETIQUETAS_IDIOMA:
+        # El mensaje del paciente era ambiguo ("ok", un zip, una foto): usamos el idioma en que contestó la IA.
+        det = _cfg.get("detectar_idioma")
+        try:
+            lang = det(res.get("response") or "") if det else None
+        except Exception:
+            lang = None
+    if lang not in ETIQUETAS_IDIOMA:
         return
     with _cfg["get_conn"]() as c:
         c.execute("CREATE TABLE IF NOT EXISTS fb_etiquetado (page_id TEXT, psid TEXT, nombre TEXT, ts INTEGER, "
