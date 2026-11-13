@@ -47,9 +47,10 @@ GRAPH = f"https://graph.facebook.com/{os.environ.get('META_API_VERSION') or 'v25
 _cfg: dict = {}
 
 
-def configurar(responder, chat_request, get_conn, detectar_idioma=None) -> None:
+def configurar(responder, chat_request, get_conn, detectar_idioma=None, abierto=None, proxima_apertura=None) -> None:
     _cfg.update(responder=responder, chat_request=chat_request, get_conn=get_conn,
-                detectar_idioma=detectar_idioma)
+                detectar_idioma=detectar_idioma, abierto=abierto or (lambda: True),
+                proxima_apertura=proxima_apertura or (lambda lang="es": "mañana"))
     threading.Thread(target=_revisar_tokens, daemon=True).start()
     with get_conn() as c:
         c.execute("""CREATE TABLE IF NOT EXISTS fb_eventos (
@@ -59,7 +60,8 @@ def configurar(responder, chat_request, get_conn, detectar_idioma=None) -> None:
         c.execute("""CREATE TABLE IF NOT EXISTS fb_estado (
             page_id TEXT, psid TEXT, pausado INTEGER DEFAULT 0, avisado INTEGER DEFAULT 0,
             PRIMARY KEY (page_id, psid))""")
-        for col in ("ult_usuario INTEGER DEFAULT 0", "recordatorios INTEGER DEFAULT 0", "idioma TEXT DEFAULT 'es'", "otra_app INTEGER DEFAULT 0", "tarjeta INTEGER DEFAULT 0"):
+        for col in ("ult_usuario INTEGER DEFAULT 0", "recordatorios INTEGER DEFAULT 0", "idioma TEXT DEFAULT 'es'", "otra_app INTEGER DEFAULT 0", "tarjeta INTEGER DEFAULT 0",
+                    "avisar INTEGER DEFAULT 0"):
             try:
                 c.execute(f"ALTER TABLE fb_estado ADD COLUMN {col}")
             except Exception:
@@ -468,12 +470,25 @@ def _comentario(page_id: str, v: dict) -> None:
         return
     visible = f"({tel[2:5]}) {tel[5:8]}-{tel[8:]}"
     import random
-    publico = f"{random.choice(_COMENTARIOS[idioma])}\n{visible}"
+    abierto = _cfg["abierto"]()
+    publico = f"{random.choice(_COMENTARIOS[idioma])}\n{visible}" if abierto else (
+        "¡Hola! Te escribimos por mensaje privado 😊" if idioma == "es" else "Hi! We sent you a private message 😊")
     r1 = requests.post(f"{GRAPH}/{cid}/comments", params={"access_token": token}, timeout=15,
                        data={"message": publico})
     r2 = requests.post(f"{GRAPH}/{cid}/likes", params={"access_token": token}, timeout=15)
     nombre = str(autor.get("name") or "").split(" ")[0]
     saludo = (f"Hola {nombre}, ¡podemos ayudarte! 📞" if idioma == "es" else f"Hi {nombre}, we can help! 📞").replace("  ", " ")
+    if not abierto:
+        cuando = _cfg["proxima_apertura"](idioma)
+        texto_oot = (f"Hola {nombre}, ahora mismo no hay agentes disponibles. A partir de {cuando} te podemos atender. "
+                     "¿Quieres que te avise cuando estemos disponibles?" if idioma == "es" else
+                     f"Hi {nombre}, there are no agents available right now. Starting {cuando} we can help you. "
+                     "Would you like us to let you know when we're open?").replace("  ", " ")
+        r3 = requests.post(f"{GRAPH}/me/messages", params={"access_token": token}, timeout=15, json={
+            "recipient": {"comment_id": cid}, "message": {"text": texto_oot}})
+        print(f"[messenger] comentario fuera de horario · público {r1.status_code} · privado {r3.status_code}", flush=True)
+        _metrica(page_id, "comentarios" if r1.status_code == 200 and r3.status_code == 200 else "errores_comentario")
+        return
     r3 = requests.post(f"{GRAPH}/me/messages", params={"access_token": token}, timeout=15, json={
         "recipient": {"comment_id": cid}, "message": {"attachment": {"type": "template", "payload": {
             "template_type": "button", "text": saludo,
@@ -600,7 +615,37 @@ def _bucle_recordatorios() -> None:
             print(f"[messenger] error recordatorios: {type(e).__name__}", flush=True)
 
 
+_AVISO_APERTURA = {
+    "es": "¡Hola! 😊 Ya estamos disponibles. Llámanos y te conectamos con un dentista en tu área.",
+    "en": "Hi! 😊 We're open now. Give us a call and we'll connect you with a dentist in your area.",
+}
+
+
+def _avisar_apertura() -> None:
+    """Al abrir, escribe a quienes nos contactaron fuera de horario (solo dentro de la ventana de 24 h)."""
+    ahora = int(time.time())
+    with _cfg["get_conn"]() as c:
+        filas = c.execute("""SELECT page_id, psid, idioma FROM fb_estado WHERE avisar = 1 AND pausado = 0
+                             AND ult_usuario > ?""", (ahora - 23 * 3600 - 1800,)).fetchall()
+        c.execute("UPDATE fb_estado SET avisar = 0 WHERE avisar = 1 AND ult_usuario <= ?", (ahora - 23 * 3600 - 1800,))
+    for page_id, psid, idioma in filas:
+        if _modo(page_id) != "responder" or _otra_app_reciente(page_id, psid):
+            continue
+        idioma = idioma if idioma in _AVISO_APERTURA else "es"
+        enviado = _boton_llamar(page_id, psid, idioma, _AVISO_APERTURA[idioma])
+        with _cfg["get_conn"]() as c:
+            # el aviso de apertura reemplaza al recordatorio de 30 min (queda solo el de 22 h)
+            c.execute("UPDATE fb_estado SET avisar = 0, recordatorios = MAX(recordatorios, 1), tarjeta = ? "
+                      "WHERE page_id = ? AND psid = ?",
+                      (ahora if enviado else 0, page_id, psid))
+        _metrica(page_id, "avisos_apertura" if enviado else "errores_envio")
+        print(f"[messenger] aviso de apertura a {hashlib.sha256(psid.encode()).hexdigest()[:8]} enviado={enviado}", flush=True)
+
+
 def _enviar_recordatorios() -> None:
+    if not _cfg["abierto"]():
+        return  # fuera de horario no se manda nada; al abrir sale primero el aviso de apertura
+    _avisar_apertura()
     ahora = int(time.time())
     with _cfg["get_conn"]() as c:
         filas = c.execute("""SELECT page_id, psid, recordatorios, ult_usuario, idioma FROM fb_estado
@@ -761,7 +806,14 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
         etiquetado = _etiquetar_una_vez(page_id, psid, ETIQUETA_MANUAL)
         print(f"[messenger] NECESITA HUMANO · página {page_id} · chat {quien} · etiqueta={etiquetado}", flush=True)
     if ok and res.get("action") == "respond":
-        _programar_tarjeta(page_id, psid, idioma)
+        if res.get("abierto", True):
+            _programar_tarjeta(page_id, psid, idioma)
+        else:
+            # Fuera de horario: sin botón de llamar; le escribimos al abrir (si sigue dentro de las 24 h de Meta)
+            # salvo que haya dicho que no quiere el aviso.
+            no_quiere = bool(re.search(r"^\s*(no|no gracias|nah|no thanks|no thank you)\b", (texto or "").lower()))
+            with _cfg["get_conn"]() as c:
+                c.execute("UPDATE fb_estado SET avisar=? WHERE page_id=? AND psid=?", (0 if no_quiere else 1, page_id, psid))
     print(f"[messenger] {quien}: IA acción={res.get('action')} · {len(res.get('response') or '')} chars · "
           f"enviado={ok}", flush=True)
     _accion(page_id, psid, "typing_off")

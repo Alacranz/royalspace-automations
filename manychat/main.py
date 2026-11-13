@@ -632,14 +632,14 @@ def _zip_in_history(history: list[dict]) -> str | None:
 
 
 BUSINESS_TZ = pytz.timezone("America/New_York")
-# L-V 9:00-19:00 EST, S 9:00-17:00 EST
+# L-V 9:00-18:00 EST, S 9:00-15:00 EST (Edwar, 2026-11-12)
 BUSINESS_HOURS = {
-    0: (9, 19),  # Monday
-    1: (9, 19),  # Tuesday
-    2: (9, 19),  # Wednesday
-    3: (9, 19),  # Thursday
-    4: (9, 19),  # Friday
-    5: (9, 17),  # Saturday
+    0: (9, 18),  # Monday
+    1: (9, 18),  # Tuesday
+    2: (9, 18),  # Wednesday
+    3: (9, 18),  # Thursday
+    4: (9, 18),  # Friday
+    5: (9, 15),  # Saturday
     # Sunday: closed
 }
 
@@ -1002,7 +1002,7 @@ def responder(req: ChatRequest) -> dict:
 
     if is_business_hours():
         context_parts.append(
-            "AVAILABILITY: We are currently OPEN and available right now (hours: Mon-Fri 9AM-7PM EST, Sat 9AM-5PM EST). "
+            "AVAILABILITY: We are currently OPEN and available right now (hours: Mon-Fri 9AM-6PM EST, Sat 9AM-3PM EST). "
             "If the user asks whether you are available, open, or working today — answer YES directly and warmly, then invite them to call. "
             "Example (ES): 'Sí, estamos disponibles ahora mismo. Llámanos y te conectamos con un dentista en tu área.' "
             "Example (EN): 'Yes, we are available right now. Give us a call and we'll connect you with a dentist in your area.'"
@@ -1122,6 +1122,7 @@ def responder(req: ChatRequest) -> dict:
         "language":     final_lang,
         "tags":         tags,
         "language_source": _lang_source,
+        "abierto":      is_business_hours(),
     }
 
 
@@ -1131,7 +1132,8 @@ try:
 except ImportError:
     import messenger_direct  # noqa: E402
 messenger_direct.configurar(responder=responder, chat_request=ChatRequest, get_conn=get_conn,
-                            detectar_idioma=detect_language)
+                            detectar_idioma=detect_language, abierto=is_business_hours,
+                            proxima_apertura=get_next_open_label)
 app.include_router(messenger_direct.router)
 
 try:
