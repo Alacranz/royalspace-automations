@@ -134,7 +134,7 @@ def _tokens_desde_usuario() -> None:
 
 
 # ── Limpieza de etiquetas de la bandeja (inventario y borrado SOLO con lista aprobada por Edwar) ──
-ETIQUETAS_NUESTRAS = {"Sugerir zip", "Pide humano", "Medicaid", "Fuera de USA", "Urgencia / dolor", "Alto valor",
+ETIQUETAS_NUESTRAS = {"Sugerir zip", "Pide humano", "Fuera de horario", "Medicaid", "Fuera de USA", "Urgencia / dolor", "Alto valor",
                       "Español", "Inglés"}
 
 
@@ -442,15 +442,21 @@ def _modo_comentarios(page_id: str) -> str:
     return _json_env("MESSENGER_COMENTARIOS").get(page_id, "observar")
 
 
-def _comentario(page_id: str, v: dict) -> None:
+def _comentario(page_id: str, v: dict, forzar: bool = False) -> None:
     cid = str(v.get("comment_id") or "")
     autor = v.get("from") or {}
     if not cid or str(autor.get("id")) == page_id:
         return  # respuestas de la propia página
     if v.get("parent_id") and v.get("post_id") and v["parent_id"] != v["post_id"]:
         return  # solo comentarios de primer nivel (igual que ManyChat)
-    if not _registrar(f"c:{cid}", page_id, str(autor.get("id") or cid)):
+    if not forzar and not _registrar(f"c:{cid}", page_id, str(autor.get("id") or cid)):
         return  # Meta reenvió el mismo comentario
+    if not forzar and _modo_comentarios(page_id) == "responder" and not _cfg["abierto"]():
+        with _cfg["get_conn"]() as c:
+            c.execute("CREATE TABLE IF NOT EXISTS fb_cola_coment (cid TEXT PRIMARY KEY, page_id TEXT, v TEXT, ts INTEGER)")
+            c.execute("INSERT OR IGNORE INTO fb_cola_coment VALUES (?,?,?,?)", (cid, page_id, json.dumps(v), int(time.time())))
+        print(f"[messenger] comentario en página {page_id} fuera de horario — en espera hasta abrir", flush=True)
+        return
     texto = (v.get("message") or "").strip()
     det = _cfg.get("detectar_idioma")
     idioma = "es"
@@ -470,25 +476,12 @@ def _comentario(page_id: str, v: dict) -> None:
         return
     visible = f"({tel[2:5]}) {tel[5:8]}-{tel[8:]}"
     import random
-    abierto = _cfg["abierto"]()
-    publico = f"{random.choice(_COMENTARIOS[idioma])}\n{visible}" if abierto else (
-        "¡Hola! Te escribimos por mensaje privado 😊" if idioma == "es" else "Hi! We sent you a private message 😊")
+    publico = f"{random.choice(_COMENTARIOS[idioma])}\n{visible}"
     r1 = requests.post(f"{GRAPH}/{cid}/comments", params={"access_token": token}, timeout=15,
                        data={"message": publico})
     r2 = requests.post(f"{GRAPH}/{cid}/likes", params={"access_token": token}, timeout=15)
     nombre = str(autor.get("name") or "").split(" ")[0]
     saludo = (f"Hola {nombre}, ¡podemos ayudarte! 📞" if idioma == "es" else f"Hi {nombre}, we can help! 📞").replace("  ", " ")
-    if not abierto:
-        cuando = _cfg["proxima_apertura"](idioma)
-        texto_oot = (f"Hola {nombre}, ahora mismo no hay agentes disponibles. A partir de {cuando} te podemos atender. "
-                     "¿Quieres que te avise cuando estemos disponibles?" if idioma == "es" else
-                     f"Hi {nombre}, there are no agents available right now. Starting {cuando} we can help you. "
-                     "Would you like us to let you know when we're open?").replace("  ", " ")
-        r3 = requests.post(f"{GRAPH}/me/messages", params={"access_token": token}, timeout=15, json={
-            "recipient": {"comment_id": cid}, "message": {"text": texto_oot}})
-        print(f"[messenger] comentario fuera de horario · público {r1.status_code} · privado {r3.status_code}", flush=True)
-        _metrica(page_id, "comentarios" if r1.status_code == 200 and r3.status_code == 200 else "errores_comentario")
-        return
     r3 = requests.post(f"{GRAPH}/me/messages", params={"access_token": token}, timeout=15, json={
         "recipient": {"comment_id": cid}, "message": {"attachment": {"type": "template", "payload": {
             "template_type": "button", "text": saludo,
@@ -507,7 +500,7 @@ PAGINAS = {
     "220499631147731": "PerfectSmile", "231985673330880": "Dental Care Professionals",
     "100806385416210": "Dentista Latino",
 }
-ETIQUETAS_MANUALES = ("Sugerir zip", "Pide humano")
+ETIQUETAS_MANUALES = ("Sugerir zip", "Pide humano", "Fuera de horario")
 OFFSET_CCS = 4 * 3600  # Caracas = UTC-4, sin horario de verano
 
 
@@ -642,10 +635,37 @@ def _avisar_apertura() -> None:
         print(f"[messenger] aviso de apertura a {hashlib.sha256(psid.encode()).hexdigest()[:8]} enviado={enviado}", flush=True)
 
 
+def _atender_cola() -> None:
+    """Al abrir: la IA contesta lo que llegó fuera de horario. Si ya pasaron las 24 h de Meta, el chat
+    queda con la etiqueta «Fuera de horario» para que lo atienda un MB (un humano sí puede hasta 7 días)."""
+    ahora = int(time.time())
+    with _cfg["get_conn"]() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS fb_cola (page_id TEXT, psid TEXT, texto TEXT, ts INTEGER)")
+        c.execute("CREATE TABLE IF NOT EXISTS fb_cola_coment (cid TEXT PRIMARY KEY, page_id TEXT, v TEXT, ts INTEGER)")
+        filas = c.execute("SELECT page_id, psid, GROUP_CONCAT(texto, '\n'), MAX(ts) FROM fb_cola "
+                          "GROUP BY page_id, psid").fetchall()
+        c.execute("DELETE FROM fb_cola")
+        comentarios = c.execute("SELECT cid, page_id, v, ts FROM fb_cola_coment").fetchall()
+        c.execute("DELETE FROM fb_cola_coment")
+    for page_id, psid, texto, ts in filas:
+        quien = hashlib.sha256(psid.encode()).hexdigest()[:8]
+        if ahora - ts < 23 * 3600 + 1800:
+            print(f"[messenger] {quien}: respondiendo lo que llegó fuera de horario", flush=True)
+            _contestar(page_id, psid, texto, f"cola-{ts}", forzar=True)
+        else:
+            _etiquetar_una_vez(page_id, psid, "Fuera de horario")
+            _metrica(page_id, "fuera_horario_a_mano")
+            print(f"[messenger] {quien}: pasaron más de 24 h — etiqueta «Fuera de horario» para un MB", flush=True)
+    for cid, page_id, v, ts in comentarios:
+        if ahora - ts < 6 * 86400:  # Meta permite respuesta privada a un comentario hasta 7 días
+            _comentario(page_id, json.loads(v), forzar=True)
+
+
 def _enviar_recordatorios() -> None:
     if not _cfg["abierto"]():
-        return  # fuera de horario no se manda nada; al abrir sale primero el aviso de apertura
-    _avisar_apertura()
+        return  # fuera de horario no se manda nada
+    _avisar_apertura()  # quienes quedaron marcados con la versión anterior
+    _atender_cola()
     ahora = int(time.time())
     with _cfg["get_conn"]() as c:
         filas = c.execute("""SELECT page_id, psid, recordatorios, ult_usuario, idioma FROM fb_estado
@@ -742,7 +762,7 @@ def _pausa(res: dict) -> int:
     return int(time.time()) if res.get("response") else 1
 
 
-def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
+def _contestar(page_id: str, psid: str, texto: str, mid: str, forzar: bool = False) -> None:
     with _cfg["get_conn"]() as c:
         fila = c.execute("SELECT pausado, avisado FROM fb_estado WHERE page_id=? AND psid=?",
                          (page_id, psid)).fetchone()
@@ -758,16 +778,17 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
         return
     quien = hashlib.sha256(psid.encode()).hexdigest()[:8]
     clave = (page_id, psid)
-    with _lock:
-        _pendientes.setdefault(clave, []).append(texto)
-        _ultimo_mid[clave] = mid
-    # Damos 15 s: (1) ver si ManyChat contesta este mismo mensaje y (2) juntar mensajes seguidos.
-    time.sleep(int(os.environ.get("MESSENGER_ESPERA_SEG") or 15))
-    with _lock:
-        if _ultimo_mid.get(clave) != mid:
-            return  # llegó otro mensaje después: ese responde a todo junto
-        texto = "\n".join(t for t in _pendientes.pop(clave, []) if t) or texto
-        _ultimo_mid.pop(clave, None)
+    if not forzar:
+        with _lock:
+            _pendientes.setdefault(clave, []).append(texto)
+            _ultimo_mid[clave] = mid
+        # Damos 15 s: (1) ver si ManyChat contesta este mismo mensaje y (2) juntar mensajes seguidos.
+        time.sleep(int(os.environ.get("MESSENGER_ESPERA_SEG") or 15))
+        with _lock:
+            if _ultimo_mid.get(clave) != mid:
+                return  # llegó otro mensaje después: ese responde a todo junto
+            texto = "\n".join(t for t in _pendientes.pop(clave, []) if t) or texto
+            _ultimo_mid.pop(clave, None)
     if _otra_app_reciente(page_id, psid):
         print(f"[messenger] {quien}: este chat lo atiende otra app (ManyChat) — no respondo", flush=True)
         _metrica(page_id, "dejado_a_otra_app")
@@ -775,6 +796,15 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str) -> None:
     if fila and fila[0] and (fila[0] == 1 or time.time() - fila[0] < 24 * 3600):
         print(f"[messenger] {quien}: conversación pausada, no respondo", flush=True)
         return  # pidió que no le escriban
+    if not forzar and not _cfg["abierto"]():
+        # Fuera de horario: no contestamos. El mensaje queda sin leer en la bandeja (el MB lo puede atender)
+        # y la IA lo responde al abrir, si sigue dentro de las 24 h de Meta.
+        with _cfg["get_conn"]() as c:
+            c.execute("CREATE TABLE IF NOT EXISTS fb_cola (page_id TEXT, psid TEXT, texto TEXT, ts INTEGER)")
+            c.execute("INSERT INTO fb_cola VALUES (?,?,?,?)", (page_id, psid, texto, int(time.time())))
+        _metrica(page_id, "en_espera_fuera_horario")
+        print(f"[messenger] {quien}: fuera de horario — en espera hasta abrir", flush=True)
+        return
     if time.time() - _ultima_purga[0] > 86400:
         with _cfg["get_conn"]() as c:
             _purgar(c)
