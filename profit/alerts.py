@@ -758,7 +758,12 @@ def main() -> None:
     if ALERTS_MODE in ("meta", "all"):
         run_meta_alerts(config, state, now_vet)
     if ALERTS_MODE in ("calls", "all"):
-        run_ringba_alerts(config, state, now_utc, now_vet)
+        # Domingo (hora del Este): clínicas cerradas y media buyers descansando; que caigan
+        # las llamadas es normal, así que no se mandan alertas de llamadas ese día.
+        if now_utc.astimezone(pytz.timezone("America/New_York")).weekday() == 6:
+            print("[Alertas] Domingo ET: alertas de llamadas en pausa (día cerrado).")
+        else:
+            run_ringba_alerts(config, state, now_utc, now_vet)
 
     save_state(state)
     print("[Alertas] Finalizado.")
