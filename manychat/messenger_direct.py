@@ -365,6 +365,37 @@ def _registrar(mid: str, page_id: str, psid: str) -> bool:
             return False
 
 
+# Respuestas de Meta que NO son fallas nuestras: la persona bloqueó/borró el chat o ya no se le puede escribir
+# (#551), o el comentario ya tenía respuesta privada (#10900/#10903). Se cuentan aparte y no como errores.
+_NO_DISPONIBLE = {551}
+_YA_RESPONDIDO = {10900, 10903}
+_no_disp: set = set()
+
+
+def _codigo_meta(r) -> int:
+    try:
+        return int(r.json().get("error", {}).get("code") or 0)
+    except Exception:
+        return 0
+
+
+def _marcar_no_disponible(page_id: str, psid: str) -> None:
+    """No se le vuelve a intentar escribir (ni recordatorios ni tarjeta) hasta que la persona escriba otra vez."""
+    _no_disp.add((page_id, psid))
+    try:
+        with _cfg["get_conn"]() as c:
+            c.execute("UPDATE fb_estado SET recordatorios = 2, tarjeta = ? WHERE page_id=? AND psid=?",
+                      (int(time.time()), page_id, psid))
+    except Exception:
+        pass
+    print(f"[messenger] {hashlib.sha256(psid.encode()).hexdigest()[:8]} ya no está disponible en Messenger (#551): se deja de escribirle", flush=True)
+
+
+def _fallo(page_id: str, psid: str) -> str:
+    """Nombre de la métrica para un envío que no salió."""
+    return "no_disponible" if (page_id, psid) in _no_disp else "errores_envio"
+
+
 def _enviar(page_id: str, psid: str, texto: str) -> bool:
     token = _token(page_id)
     if not token:
@@ -376,7 +407,10 @@ def _enviar(page_id: str, psid: str, texto: str) -> bool:
             "recipient": {"id": psid}, "messaging_type": "RESPONSE", "message": {"text": texto[i:i + 1900]}})
         if r.status_code != 200:
             ok = False
-            print(f"[messenger] error al enviar ({r.status_code}): {r.text[:200]}", flush=True)
+            if _codigo_meta(r) in _NO_DISPONIBLE:
+                _marcar_no_disponible(page_id, psid)
+            else:
+                print(f"[messenger] error al enviar ({r.status_code}): {r.text[:200]}", flush=True)
             break
     return ok
 
@@ -422,7 +456,10 @@ def _boton_llamar(page_id: str, psid: str, idioma: str, texto: str = "") -> bool
         print(f"[messenger] error botón: {type(e).__name__}", flush=True)
         return False
     if r.status_code != 200:
-        print(f"[messenger] error botón ({r.status_code}): {r.text[:200]}", flush=True)
+        if _codigo_meta(r) in _NO_DISPONIBLE:
+            _marcar_no_disponible(page_id, psid)
+        else:
+            print(f"[messenger] error botón ({r.status_code}): {r.text[:200]}", flush=True)
     return r.status_code == 200
 
 
@@ -521,7 +558,8 @@ def _comentario(page_id: str, v: dict, forzar: bool = False) -> None:
     def res(r):
         return "ok" if r.status_code == 200 else f"error {r.status_code}: {r.text[:120]}"
     print(f"[messenger] comentario respondido · público {res(r1)} · like {res(r2)} · privado {res(r3)}", flush=True)
-    _metrica(page_id, "comentarios" if r1.status_code == 200 and r3.status_code == 200 else "errores_comentario")
+    privado_ok = r3.status_code == 200 or _codigo_meta(r3) in _YA_RESPONDIDO  # ya tenía respuesta privada: no es falla
+    _metrica(page_id, "comentarios" if r1.status_code == 200 and privado_ok else "errores_comentario")
 
 
 # ── Métricas para la oficina 3D y el resumen diario (solo conteos, sin datos de pacientes) ──
@@ -588,7 +626,7 @@ def resumen(dia: str | None = None) -> dict:
                              "chat": hashlib.sha256(psid.encode()).hexdigest()[:8],
                              "hora_caracas": time.strftime("%Y-%m-%d %H:%M", time.gmtime(ts - OFFSET_CCS))})
     claves = ("chats", "es", "en", "respuestas", "tarjetas", "recordatorios", "comentarios",
-              "errores_envio", "errores_comentario", "dejado_a_otra_app")
+              "errores_envio", "errores_comentario", "no_disponible", "dejado_a_otra_app")
     tot = {k: sum(p.get(k, 0) for p in pags.values()) for k in claves}
     tot["etiquetas"] = {}
     for p in pags.values():
@@ -663,7 +701,7 @@ def _avisar_apertura() -> None:
             c.execute("UPDATE fb_estado SET avisar = 0, recordatorios = MAX(recordatorios, 1), tarjeta = ? "
                       "WHERE page_id = ? AND psid = ?",
                       (ahora if enviado else 0, page_id, psid))
-        _metrica(page_id, "avisos_apertura" if enviado else "errores_envio")
+        _metrica(page_id, "avisos_apertura" if enviado else _fallo(page_id, psid))
         print(f"[messenger] aviso de apertura a {hashlib.sha256(psid.encode()).hexdigest()[:8]} enviado={enviado}", flush=True)
 
 
@@ -711,7 +749,7 @@ def _enviar_recordatorios() -> None:
         if ahora - ult < minutos * 60 or ahora - ult > 23 * 3600 + 1800:
             continue  # todavía no toca, o ya se cerró la ventana de 24 h
         enviado = _boton_llamar(page_id, psid, idioma, texto)
-        _metrica(page_id, "recordatorios" if enviado else "errores_envio")
+        _metrica(page_id, "recordatorios" if enviado else _fallo(page_id, psid))
         with _cfg["get_conn"]() as c:
             c.execute("UPDATE fb_estado SET recordatorios = ? WHERE page_id = ? AND psid = ?",
                       (n + 1, page_id, psid))
@@ -807,6 +845,7 @@ def _pausa(res: dict) -> int:
 
 
 def _contestar(page_id: str, psid: str, texto: str, mid: str, forzar: bool = False) -> None:
+    _no_disp.discard((page_id, psid))  # volvió a escribir: ya se le puede responder
     with _cfg["get_conn"]() as c:
         fila = c.execute("SELECT pausado, avisado FROM fb_estado WHERE page_id=? AND psid=?",
                          (page_id, psid)).fetchone()
@@ -872,7 +911,7 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str, forzar: bool = Fal
                    int(time.time()), idioma))
     ok = _enviar(page_id, psid, res["response"]) if res.get("response") else None
     if ok is not None:
-        _metrica(page_id, "respuestas" if ok else "errores_envio")
+        _metrica(page_id, "respuestas" if ok else _fallo(page_id, psid))
     for nombre in res.get("tags") or []:
         _etiquetar_una_vez(page_id, psid, nombre)
     _etiqueta_idioma(page_id, psid, res)
