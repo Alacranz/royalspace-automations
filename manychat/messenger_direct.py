@@ -784,11 +784,20 @@ def _etiquetar(page_id: str, psid: str, nombre: str, reintento: bool = True) -> 
             with _cfg["get_conn"]() as c:
                 c.execute("INSERT OR REPLACE INTO fb_etiquetas VALUES (?,?,?)", (page_id, nombre, str(eid)))
         r = requests.post(f"{GRAPH}/{eid}/label", params={"access_token": token}, timeout=20, json={"user": psid})
-        if r.status_code != 200 and reintento and '"code":100' in r.text.replace(" ", ""):
-            # El id guardado ya no existe o es de otra configuración: lo olvidamos y lo buscamos/creamos de nuevo.
-            with _cfg["get_conn"]() as c:
-                c.execute("DELETE FROM fb_etiquetas WHERE page_id=? AND nombre=?", (page_id, nombre))
-            return _etiquetar(page_id, psid, nombre, reintento=False)
+        if r.status_code != 200 and '"code":100' in r.text.replace(" ", ""):
+            # ¿La etiqueta existe? Si existe, el problema es ese chat (la persona bloqueó o borró la conversación,
+            # o Meta ya no deja asociarla): no es falla de la página y no vale la pena insistir.
+            existe = requests.get(f"{GRAPH}/{eid}", params={"access_token": token, "fields": "page_label_name"},
+                                  timeout=10).status_code == 200
+            if existe:
+                print(f"[messenger] chat {hashlib.sha256(psid.encode()).hexdigest()[:8]} de {page_id} no acepta etiquetas "
+                      f"(persona no disponible); se omite '{nombre}'", flush=True)
+                return False
+            if reintento:
+                # El id guardado ya no existe: lo olvidamos y lo buscamos/creamos de nuevo.
+                with _cfg["get_conn"]() as c:
+                    c.execute("DELETE FROM fb_etiquetas WHERE page_id=? AND nombre=?", (page_id, nombre))
+                return _etiquetar(page_id, psid, nombre, reintento=False)
         if r.status_code != 200:
             print(f"[messenger] no pude etiquetar '{nombre}' en {page_id}: {r.text[:200]}", flush=True)
         return r.status_code == 200
