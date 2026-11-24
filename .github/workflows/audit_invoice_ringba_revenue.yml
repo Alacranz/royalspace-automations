@@ -1,0 +1,77 @@
+name: Audit Ringba buyer invoice revenue Oct 2026 read only
+on:
+  push:
+    branches: [audit/invoice-buyers-oct-2026-20261124]
+    paths: [.github/workflows/audit_invoice_ringba_revenue.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install requests pytz
+      - name: Query raw buyer conversion revenue
+        env:
+          RINGBA_API_TOKEN: ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID: ${{ secrets.RINGBA_ACCOUNT_ID }}
+        run: |
+          python - <<'PY'
+          import os,sys,datetime,collections,re
+          import pytz
+          sys.path.insert(0,"profit")
+          from common.ringba_client import post_calllogs,normalize_name,to_float
+          tok=os.environ["RINGBA_API_TOKEN"]
+          acc=os.environ["RINGBA_ACCOUNT_ID"]
+          tz=pytz.timezone("America/Caracas")
+          wanted={"oct":["2026-10-01","2026-10-31"],"sept":["2026-09-01","2026-09-30"]}
+          bucket=collections.defaultdict(lambda:{"n":0,"converted":0,"rev":0.,"payout":0.,"dup":0,"dup_rev":0.,"noconv_rev":0.,"rev_nondup":0.})
+          processed=0
+          for key,(start,end) in wanted.items():
+            dt=datetime.date.fromisoformat(start)
+            until=datetime.date.fromisoformat(end)
+            while dt<=until:
+              startUTC=tz.localize(datetime.datetime.combine(dt,datetime.time.min)).astimezone(datetime.timezone.utc)
+              endUTC=tz.localize(datetime.datetime.combine(dt,datetime.time.max.replace(microsecond=0))).astimezone(datetime.timezone.utc)
+              offset=0
+              for page in range(12):
+                resp=post_calllogs(tok,acc,startUTC,endUTC,1000,offset)
+                report=resp.get("report") or {}
+                data=report.get("records") or []
+                for r in data:
+                  processed+=1
+                  buyer=re.sub(r"^\(\d+\)\s*","",str(r.get("buyer") or "")).strip()
+                  if not buyer:buyer="(blank)"
+                  amt=to_float(r.get("conversionAmount"))
+                  pout=to_float(r.get("payoutAmount"))
+                  dupe=bool(r.get("isDuplicate"))
+                  if key=="oct":
+                    period="OCT"
+                    if dt.day<=15:partials=["OCT","ARAGON_01_15"]
+                    else:partials=["OCT","ARAGON_16_31"]
+                  else:partials=["SEPT"]
+                  for period in partials:
+                    if period.startswith("ARAGON_") and "aragon" not in buyer.lower():continue
+                    row=bucket[period,buyer]
+                    row["n"]+=1
+                    row["converted"]+=bool(r.get("hasConverted"))
+                    row["rev"]+=amt
+                    row["payout"]+=pout
+                    row["dup"]+=dupe
+                    row["dup_rev"]+=amt if dupe else 0
+                    row["noconv_rev"]+=amt if not r.get("hasConverted") else 0
+                    row["rev_nondup"]+=amt if not dupe else 0
+                offset+=len(data)
+                if not data or len(data)<1000 or (report.get("totalCount") and offset>=int(report["totalCount"])):break
+              print("PROGRESS|%s|%s|%d"%(key,dt.isoformat(),processed),flush=True)
+              dt+=datetime.timedelta(days=1)
+          for (p,b),v in sorted(bucket.items()):
+            print("RINGBA_INVOICE|%s|%s|%.4f|%.4f|%.4f|%d|%d|%d|%.4f|%.4f"%(p,b,v["rev"],v["rev_nondup"],v["payout"],v["n"],v["converted"],v["dup"],v["dup_rev"],v["noconv_rev"]),flush=True)
+          print("FINISHED|%d"%processed,flush=True)
+          
+          PY
