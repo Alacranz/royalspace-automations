@@ -1,0 +1,99 @@
+name: Audit manychat facebook page attribution (read-only)
+on:
+  push:
+    branches: [audit/manychat-meta-pages-20261124]
+    paths: [.github/workflows/audit_manychat_fbpage.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Read-only Meta ad creatives to identify Facebook pages
+        env:
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          META_API_VERSION: ${{ vars.META_API_VERSION || 'v25.0' }}
+        run: |
+          python - <<'PY'
+          import os, json, requests, concurrent.futures, collections, time
+          from urllib.parse import urlparse
+          BASE="https://graph.facebook.com/"+os.getenv("META_API_VERSION","v25.0")
+          TOKEN=os.environ["META_ACCESS_TOKEN"]
+          C=requests.Session()
+          CFG=json.load(open("profit/config.json",encoding="utf-8"))
+          people=[("Esteban","esteban ramirez"),("Douglas","douglas contreras"),("Luis","luis salas"),("Kevin","kevin pernia"),("Clara","clara castro"),("Cordova","edixon cordova"),("Sebastian","sebastian reyes"),("Caribay","caribay flores")]
+          cache={}
+          def graph(path,params):
+              p={"access_token":TOKEN}
+              p.update(params)
+              try:
+                  r=C.get(BASE+"/"+path,params=p,timeout=45)
+                  if r.status_code!=200:
+                      return {"_error":r.status_code,"_msg":r.json().get("error",{}).get("message","")[:180]}
+                  return r.json()
+              except Exception as e:
+                  return {"_error":type(e).__name__}
+          def meta_ad(ad_id):
+              d=graph(ad_id,{"fields":"id,name,creative{id,name,object_story_spec,object_story_id,effective_object_story_id,actor_id,instagram_actor_id}"})
+              c=d.get("creative",{})
+              story=c.get("object_story_spec") or {}
+              pid=str(story.get("page_id") or "")
+              if not pid:
+                  for k in ("effective_object_story_id","object_story_id"):
+                      cand=str(c.get(k) or "")
+                      if "_" in cand:pid=cand.split("_")[0];break
+              return {"id":ad_id,"page_id":pid,"ad_name":d.get("name",""),"error":d.get("_error"),"creative":c.get("name","")}
+          def get_page_name(pid):
+              if pid in cache:return cache[pid]
+              d=graph(pid,{"fields":"id,name"})
+              cache[pid]=d.get("name") or ("UNAVAILABLE_HTTP_"+str(d.get("_error")))
+              return cache[pid]
+          for display,query in people:
+              lst=[m for m in CFG.get("media_buyers",[]) if query in m.get("display_name","").lower()]
+              if len(lst)!=1:print("META_PAGE_ERROR|"+display+"|mapping_missing",flush=True);continue
+              acc=str(lst[0].get("facebook_ad_account_id","")).replace("act_","")
+              params={"fields":"ad_id,ad_name,spend,campaign_name","level":"ad","time_range":json.dumps({"since":"2026-10-01","until":"2026-10-31"}),"limit":400}
+              resp=graph("act_"+acc+"/insights",params)
+              if resp.get("_error"):
+                  print("META_PAGE_ERROR|%s|insights|%s|%s"%(display,resp.get("_error"),resp.get("_msg")),flush=True)
+                  continue
+              data=resp.get("data") or []
+              # Bounded provider-owned pagination, account-level total spend already independently checked
+              nxt=resp.get("paging",{}).get("next")
+              for page in range(2):
+                  if not nxt:break
+                  try:
+                      r=requests.get(nxt,timeout=45)
+                      if r.status_code!=200:break
+                      extra=r.json();data+=(extra.get("data") or []);nxt=extra.get("paging",{}).get("next")
+                  except Exception:break
+              data.sort(key=lambda a:float(a.get("spend") or 0),reverse=True)
+              pick=data[:24]
+              def get_one(a):
+                  obj=meta_ad(str(a.get("ad_id")))
+                  obj["spend"]=float(a.get("spend") or 0)
+                  obj["report_adname"]=a.get("ad_name","")
+                  obj["campaign"]=a.get("campaign_name","")
+                  return obj
+              with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                  aa=list(pool.map(get_one,pick))
+              grouped=collections.defaultdict(lambda:{"spend":0.0,"ads":0,"samples":[],"campaigns":set()})
+              for z in aa:
+                  v=grouped[z["page_id"] or "unknown"]
+                  v["spend"]+=z["spend"]
+                  v["ads"]+=1
+                  if len(v["samples"])<3:v["samples"].append(z["report_adname"][:80])
+                  if len(v["campaigns"])<3:v["campaigns"].add(z["campaign"][:80])
+              for pid,v in sorted(grouped.items(),key=lambda x:-x[1]["spend"]):
+                  page_name=get_page_name(pid) if pid!="unknown" else "unknown"
+                  print("META_PAGE|%s|%s|%s|%.2f|%d|%s|%s"%(display,pid,page_name,v["spend"],v["ads"],json.dumps(v["samples"],ensure_ascii=False),json.dumps(sorted(v["campaigns"]),ensure_ascii=False)),flush=True)
+              print("META_SUMMARY|%s|%d|%d|%.2f|%s"%(display,len(data),len(pick),sum(float(x.get("spend") or 0) for x in data),",".join(sorted(grouped))),flush=True)
+          
+          PY
