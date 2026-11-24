@@ -1,0 +1,55 @@
+name: Audit Ringba payout Nov 02–08 2026 read only
+on:
+  push:
+    branches: [audit/ringba-nov-02-08-2026-20261124]
+    paths: [.github/workflows/audit_ringba_nov02_nov08_2026.yml]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install requests pytz
+      - name: Verify fresh Ringba publisher payouts
+        env:
+          RINGBA_API_TOKEN: ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID: ${{ secrets.RINGBA_ACCOUNT_ID }}
+        run: |
+          python - <<'PY'
+          import os, sys
+          from datetime import datetime, timezone
+          import pytz
+          sys.path.insert(0, "profit")
+          from common.ringba_client import get_publisher_summary
+          
+          token = os.environ["RINGBA_API_TOKEN"]
+          account = os.environ["RINGBA_ACCOUNT_ID"]
+          people = [
+           ("Esteban", "t.i esteban ramirez royalspace"),
+           ("Douglas", "t.i douglas contreras royalspace"),
+           ("Luis", "t.i luis salas"),
+           ("Kevin", "t.i kevin pernia"),
+           ("Clara", "t.i clara castro"),
+           ("Cordova", "t.i edixon cordova royalspace"),
+           ("Sebastian", "sebastian reyes"),
+           ("Caribay", "caribay flores"),
+          ]
+          for timezone_name, zone in [("VET_UTC4",pytz.timezone("America/Caracas")),("FIXED_UTC5",pytz.FixedOffset(-300))]:
+            start=zone.localize(datetime(2026,11,2,0,0,0)).astimezone(timezone.utc)
+            end=zone.localize(datetime(2026,11,8,23,59,59)).astimezone(timezone.utc)
+            m=get_publisher_summary(token,account,start,end)
+            print("RINGBA_PERIOD|%s|%s|%s"%(timezone_name,start.isoformat(),end.isoformat()),flush=True)
+            total=0.0
+            for display,key in people:
+              value=round(float(m.get(key,{}).get("payout",0.0)),4)
+              total+=value
+              print("RINGBA_ROW|%s|%s|%.4f"%(timezone_name,display,value),flush=True)
+            print("RINGBA_TOTAL|%s|%.4f"%(timezone_name,total),flush=True)
+          
+          PY
