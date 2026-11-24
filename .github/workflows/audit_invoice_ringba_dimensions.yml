@@ -1,0 +1,53 @@
+name: Audit Ringba fields buyers October invoice (read only)
+on:
+  push:
+    branches: [audit/invoice-buyers-oct-2026-20261124]
+    paths: [.github/workflows/audit_invoice_ringba_dimensions.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install requests pytz
+      - name: Read Ringba logs metadata without personal data
+        env:
+          RINGBA_API_TOKEN: ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID: ${{ secrets.RINGBA_ACCOUNT_ID }}
+        run: |
+          python - <<'PY'
+          import os,sys,collections,json
+          from datetime import datetime,timezone
+          import pytz
+          sys.path.insert(0,"profit")
+          from common.ringba_client import post_calllogs
+          tok=os.environ["RINGBA_API_TOKEN"]
+          acc=os.environ["RINGBA_ACCOUNT_ID"]
+          tz=pytz.timezone("America/Caracas")
+          for date in ("2026-10-10","2026-10-20","2026-09-25"):
+            st=tz.localize(datetime.fromisoformat(date)).astimezone(timezone.utc)
+            et=st.replace(hour=st.hour)+__import__("datetime").timedelta(days=1,seconds=-1)
+            r=post_calllogs(tok,acc,st,et,400,0)
+            records=(r.get("report") or {}).get("records") or []
+            print("SAMPLE_DATE|%s|%d|%s"%(date,len(records),r.get("report",{}).get("totalCount")),flush=True)
+            interesting=collections.Counter()
+            printed=0
+            for x in records:
+              if float(x.get("conversionAmount") or 0)>0:
+                if printed<3:
+                  print("SAMPLE_KEYS|"+date+"|"+",".join(sorted(x.keys())),flush=True)
+                  print("SAMPLE_SAFE|"+date+"|"+json.dumps({k:v for k,v in x.items() if any(t in k.lower() for t in ("target","buyer","campaign","group","offer","endpoint","routing","destination","publisher","source")) and isinstance(v,(str,int,float))},ensure_ascii=False,default=str)[:1500],flush=True)
+                  printed+=1
+              for k,v in x.items():
+                if any(t in k.lower() for t in ("target","buyer","campaign","group","offer","endpoint","routing","destination")) and isinstance(v,str) and len(v)<180 and v:
+                  interesting[(k,v)]+=1
+            for (k,v),n in interesting.most_common(36):
+              print("VALUE|%s|%s|%s|%d"%(date,k,v,n),flush=True)
+          
+          PY
