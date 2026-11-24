@@ -1,0 +1,67 @@
+name: Audit Ringba payout octubre 2026 - solo lectura
+on:
+  push:
+    branches: [audit/ringba-octubre-2026-20261124]
+    paths: [.github/workflows/audit_ringba_oct_2026.yml]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install read-only dependencies
+        run: pip install requests pytz
+      - name: Query current Ringba payout amounts by media buyer
+        env:
+          RINGBA_API_TOKEN: ${{ secrets.RINGBA_API_TOKEN }}
+          RINGBA_ACCOUNT_ID: ${{ secrets.RINGBA_ACCOUNT_ID }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          from datetime import datetime, timezone, timedelta
+          import pytz
+          sys.path.insert(0, "profit")
+          from common.ringba_client import get_publisher_summary
+          
+          token=os.environ["RINGBA_API_TOKEN"]
+          account=os.environ["RINGBA_ACCOUNT_ID"]
+          tz=pytz.timezone("America/Caracas")
+          fixed5=pytz.FixedOffset(-300)
+          people=[
+            ("Esteban","t.i esteban ramirez royalspace"),
+            ("Douglas","t.i douglas contreras royalspace"),
+            ("Luis","t.i luis salas"),
+            ("Kevin","t.i kevin pernia"),
+            ("Clara","t.i clara castro"),
+            ("Cordova","t.i edixon cordova royalspace"),
+            ("Sebastian","sebastian reyes"),
+            ("Caribay","caribay flores"),
+          ]
+          periods=[
+           ("S1","2026-09-28","2026-10-04",tz),
+           ("S2","2026-10-05","2026-10-11",tz),
+           ("S3","2026-10-12","2026-10-18",tz),
+           ("S4","2026-10-19","2026-10-25",tz),
+           ("S5","2026-10-26","2026-11-01",tz),
+           ("OCT_UTC5","2026-10-01","2026-10-31",fixed5),
+           ("OCT_UTC4","2026-10-01","2026-10-31",tz),
+          ]
+          for label,s,e,zone in periods:
+              start=zone.localize(datetime.strptime(s,"%Y-%m-%d")).astimezone(timezone.utc)
+              end=zone.localize(datetime.strptime(e,"%Y-%m-%d").replace(hour=23,minute=59,second=59)).astimezone(timezone.utc)
+              m=get_publisher_summary(token,account,start,end)
+              print("AUDIT_PERIOD|%s|%s|%s|%s|%s"%(label,s,e,start.isoformat(),end.isoformat()),flush=True)
+              total=0.0
+              for display,key in people:
+                  amount=round(float(m.get(key,{}).get("payout",0.0)),4)
+                  total+=amount
+                  print("AUDIT_ROW|%s|%s|%.4f"%(label,display,amount),flush=True)
+              print("AUDIT_TOTAL|%s|%.4f"%(label,total),flush=True)
+          
+          PY
