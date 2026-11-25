@@ -1,16 +1,12 @@
 name: Billing — Facturas Mensuales
 
-# Corre el día 28 de cada mes a las 9:00 AM EST (= 14:00 UTC)
-# Crea y envía facturas a Rex Direct y Ray Advertising
-# con el revenue de Ringba del mes anterior.
-# Regla: factura del mes M se envía el día 28 del mes M+1
-#        plazo de pago: 15 días desde la fecha de factura
-#
-# workflow_dispatch permite pruebas manuales en cualquier momento.
+# El día 25 a las 10:05 a. m. de Caracas, respalda la facturación del mes anterior.
+# La corrida manual se mantiene. Si hubo un intento manual, incluso DRY RUN,
+# no crear ni acumular otra vez: los intentos parciales requieren conciliación.
 
 on:
   schedule:
-    - cron: "0 14 28 * *"       # 9:00 AM EST, día 28 de cada mes
+    - cron: "5 14 25 * *"       # 10:05 a. m. de Caracas
   workflow_dispatch:
     inputs:
       dry_run:
@@ -19,6 +15,14 @@ on:
         default: "false"
         type: choice
         options: ["false", "true"]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: royalspace-billing-invoices
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -29,10 +33,76 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Verificar historial antes de facturar automáticamente
+        id: guard
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timedelta, timezone
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+          from zoneinfo import ZoneInfo
+
+          def emit(should_bill, message):
+              print(message)
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  print("should_bill=" + str(should_bill).lower(), file=out)
+
+          def main():
+              # A retry may follow a partial write to Zoho or Sheets.
+              if os.environ["GITHUB_RUN_ATTEMPT"] != "1":
+                  emit(False, "::warning::Reintento automático omitido. Revisar Zoho y Sheets antes de reintentar.")
+                  return
+
+              now = datetime.now(ZoneInfo("America/Caracas"))
+              if now.day != 25:
+                  emit(False, "::warning::Ejecución automática fuera del día 25. Revisar antes de facturar.")
+                  return
+
+              start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+              period = (start - timedelta(days=1)).strftime("%Y-%m")
+              since = start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+              api = os.environ["GITHUB_API_URL"]
+              repo = os.environ["GITHUB_REPOSITORY"]
+              path = f"{api}/repos/{repo}/actions/workflows/billing_invoices.yml/runs"
+              query = urlencode({"created": f">={since}", "per_page": 100})
+              req = Request(f"{path}?{query}", headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+              })
+              with urlopen(req, timeout=20) as response:
+                  history = json.load(response)
+              runs = history["workflow_runs"]
+              if not isinstance(runs, list) or history["total_count"] > len(runs):
+                  raise RuntimeError("Historial incompleto: facturación automática detenida.")
+              current = int(os.environ["GITHUB_RUN_ID"])
+              if not any(run["id"] == current for run in runs):
+                  raise RuntimeError("La corrida actual no aparece en el historial; facturación detenida.")
+              for run in runs:
+                  if run["id"] == current:
+                      continue
+                  event = run["event"]
+                  if event == "workflow_dispatch" or (
+                      event == "schedule" and run["run_number"] < int(os.environ["GITHUB_RUN_NUMBER"])
+                  ):
+                      emit(False, f"::notice::{period} omitido por corrida previa o manual #{run['run_number']} ({run['status']}/{run['conclusion']}). Revisar si no terminó.")
+                      return
+              emit(True, f"Sin corrida previa para {period}; se permite la facturación del mes anterior.")
+
+          main()
+          PY
+
       - name: Checkout
+        if: github.event_name == 'workflow_dispatch' || steps.guard.outputs.should_bill == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Python 3.12
+        if: github.event_name == 'workflow_dispatch' || steps.guard.outputs.should_bill == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -40,9 +110,11 @@ jobs:
           cache-dependency-path: billing/requirements.txt
 
       - name: Instalar dependencias
+        if: github.event_name == 'workflow_dispatch' || steps.guard.outputs.should_bill == 'true'
         run: pip install -r billing/requirements.txt
 
       - name: Generar facturas
+        if: github.event_name == 'workflow_dispatch' || steps.guard.outputs.should_bill == 'true'
         run: python billing/invoice_generator.py
         env:
           RINGBA_API_TOKEN:            ${{ secrets.RINGBA_API_TOKEN }}
