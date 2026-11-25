@@ -99,7 +99,11 @@ BEHAVIOR RULES:
 - The contact number will be provided in the next step — your role is only to motivate them to call.
 - MANDATORY CALL INSTRUCTION — SPANISH RESPONSES ONLY: The phone line answers in English by default. When responding in SPANISH, every single message that ends with a call to action MUST include this exact phrase (or very close equivalent) before or after the number: "Si al llamar escuchas un mensaje en inglés, presiona 1 para continuar." You MUST include this EVERY TIME you respond in Spanish with a call to action. Never skip it — if you forget this, Spanish-speaking callers hang up thinking they dialed the wrong number.
   NOTE: this "press 1" is ONLY the language menu, the very first prompt on the call. It is completely separate from the Medicaid screening question described below (which happens later in the call and uses different numbers). NEVER merge or blend these two into one instruction — state them as two distinct steps.
-- ENGLISH RESPONSES — DO NOT mention pressing 1 or any button/menu instruction. English speakers will hear the line in English by default with no extra step needed — just invite them to call and, if relevant, mention entering their zip code when prompted. Never tell an English speaker to "press 1 for Spanish" or any variation — it makes no sense to them and confuses the call flow.
+- ENGLISH RESPONSES — DO NOT mention pressing 1 or any button/menu instruction. English speakers will hear the line in English by default with no extra step needed — just invite them to call. Never tell an English speaker to "press 1 for Spanish" or any variation — it makes no sense to them and confuses the call flow.
+- MANDATORY ZIP CODE REMINDER (both languages, critical): Right after the language step, our phone system asks the caller to TYPE their 5-digit zip code on the keypad. Many callers don't do it and the call is lost. So EVERY message that sends them to call MUST tell them, as its own short clause, to have their 5-digit zip code ready and type it when the call asks for it. This is NOT asking them to send the zip in the chat — never ask for it here (except in the no-answer case below); just remind them to type it on the call.
+  ES: "Ten a mano tu código postal de 5 dígitos: al llamar te lo van a pedir, márcalo en el teclado."
+  EN: "Have your 5-digit zip code ready — the call will ask you to type it on the keypad."
+  ORDER OF STEPS on the call: (1) language: press 1 for Spanish, (2) type the 5-digit zip code, (3) later, if the clinic's system asks about Medicaid or a government plan, answer "No" or press 2. Keep this order when you mention them.
 - If the person has already been attended or no longer needs help, thank them warmly and say goodbye.
 
 IMAGES / ATTACHMENTS:
@@ -121,8 +125,8 @@ INSURANCE — MEDICAID / GOVERNMENT PLANS (critical, never break):
 - MANDATORY — AUTOMATED CALL SCREENING (A SEPARATE, LATER STEP — DO NOT CONFUSE WITH THE LANGUAGE MENU ABOVE): Later in the call, after the language step, an automated system asks if they will be applying with Medicaid or a government plan. On THIS question the options are: say "SI" or press 1 = YES → the call disconnects automatically and the lead is lost. Say "NO" or press 2 = NO → correct, the call continues. The correct choice here is always "NO" / press 2 — because for this visit they will be paying privately, not using Medicaid or a government plan.
 - CRITICAL — DO NOT MIX UP THE NUMBERS: On the language menu, 1 means "continue" (a good thing). On the Medicaid question, 1 means "YES, I have Medicaid" (disconnects the call — bad). These are different prompts with opposite meanings for the number 1. Never tell the user to just "press 1" for both, and never say "press 2" in the language-menu context. Always name which step you mean.
 - Include this instruction EVERY TIME you redirect someone to call, as its OWN separate clause — never merged into the same sentence as the language/press-1 instruction:
-  ES: "...Presiona 1 para continuar. Más adelante en la llamada te preguntarán si vas a aplicar con Medicaid o algún plan del gobierno — ahí responde 'No' o presiona 2 para seguir."
-  EN: "...Later in the call you'll be asked if you'll be applying with Medicaid or a government plan — answer 'No' or press 2 to continue."
+  ES: "...Presiona 1 para continuar y luego marca tu código postal de 5 dígitos. Más adelante en la llamada te pueden preguntar si vas a aplicar con Medicaid o algún plan del gobierno — ahí responde 'No' o presiona 2 para seguir."
+  EN: "...Type your 5-digit zip code when asked. Later in the call you may be asked if you'll be applying with Medicaid or a government plan — answer 'No' or press 2 to continue."
 - Never skip this. Forgetting it, or confusing it with the language step, means the automated system disconnects the call and the lead is lost.
 
 WHEN USER SAYS NOBODY ANSWERED / CAN'T REACH US / NO CLINICS IN THEIR AREA:
@@ -831,8 +835,19 @@ def start_github_scheduler() -> None:
         misfire_grace_time=600,
     )
 
+    # Revisor del bot de Messenger — lunes, miércoles y viernes 9:15 AM VET (antes de que arranque el día de
+    # los MB). Revisa errores, etiquetas, recordatorios, ZIP en el IVR y la calidad de las respuestas.
+    scheduler.add_job(
+        dispatch_github_workflow,
+        CronTrigger(day_of_week="mon,wed,fri", hour=9, minute=15, timezone="America/Caracas"),
+        args=["messenger_review.yml"],
+        id="messenger_review",
+        misfire_grace_time=1800,
+    )
+
     scheduler.start()
-    print("[github_dispatch] Scheduler externo iniciado (true_profit + mb_daily_summary + alertas meta/llamadas)")
+    print("[github_dispatch] Scheduler externo iniciado (true_profit + mb_daily_summary + alertas meta/llamadas "
+          "+ revisor de Messenger L-M-V)")
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
@@ -1123,6 +1138,14 @@ def responder(req: ChatRequest) -> dict:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Claude error: {type(e).__name__}")
 
+    # Sin señal de idioma en el mensaje ni en el historial: el idioma real es el que usó la IA al responder
+    # (por defecto español). Antes quedaba "en" y el botón y los recordatorios salían en inglés a
+    # pacientes hispanohablantes que solo escribieron "Info", un emoji o un número.
+    if _lang_source == "default":
+        reply_lang = detect_language(reply)
+        final_lang = reply_lang if reply_lang in ("en", "es") else "es"
+        set_subscriber_language(req.subscriber_id, final_lang)
+
     # ── Guardar historial ─────────────────────────────────────────────────────
     save_message(req.subscriber_id, "user", text)
     save_message(req.subscriber_id, "assistant", reply)
@@ -1168,6 +1191,13 @@ messenger_direct.configurar(responder=responder, chat_request=ChatRequest, get_c
                             proxima_apertura=get_next_open_label, aviso_feriado=aviso_feriado,
                             es_baja=is_opt_out)
 app.include_router(messenger_direct.router)
+
+# Revisión periódica del bot (la consume monitoring/messenger_review.py, L-M-V)
+try:
+    from manychat import revision as revision_bot
+except ImportError:
+    import revision as revision_bot
+app.include_router(revision_bot.router)
 
 try:
     from manychat import gastos

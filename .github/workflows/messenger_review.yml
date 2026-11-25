@@ -1,0 +1,47 @@
+name: Revisor del bot de Messenger
+
+# Lunes, miércoles y viernes 9:15 AM VET. Lo dispara el scheduler del bot en Railway
+# (manychat/main.py → start_github_scheduler), no `schedule:` — GitHub descarta esos triggers.
+# Revisa errores, etiquetas, recordatorios, pérdidas en el IVR (ZIP) y la calidad de las respuestas,
+# y manda el reporte a Discord #mod.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: "Días a revisar (vacío = 3 los lunes, 2 los demás días)"
+        required: false
+        default: ""
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  revisar:
+    name: Revisar el bot
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: monitoring/requirements.txt
+
+      - name: Instalar dependencias
+        run: pip install -r monitoring/requirements.txt
+
+      - name: Revisar y reportar
+        run: python monitoring/messenger_review.py
+        env:
+          DIAS:                ${{ inputs.dias }}
+          WEBHOOK_STATS_URL:   ${{ secrets.WEBHOOK_STATS_URL }}
+          STATS_API_KEY:       ${{ secrets.STATS_API_KEY }}
+          CALLGRID_API_KEY:    ${{ secrets.CALLGRID_API_KEY }}
+          CALLGRID_ORG_ID:     ${{ secrets.CALLGRID_ORG_ID }}
+          DISCORD_WEBHOOK_MOD: ${{ secrets.DISCORD_WEBHOOK_MOD }}

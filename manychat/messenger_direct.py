@@ -122,7 +122,9 @@ def _tokens_desde_usuario() -> None:
         d = r.json() or {}
         if r.status_code != 200:
             print(f"[messenger] META_USER_TOKEN no sirvió: {str(d.get('error', {}).get('message', ''))[:150]}", flush=True)
+            _estado_sistema("meta_user_token", "vencido o inválido")
             return
+        _estado_sistema("meta_user_token", "ok")
         nuestras = set(_json_env("MESSENGER_PAGE_PHONES")) | set(_json_env("MESSENGER_PAGE_TOKENS"))
         n = 0
         with _cfg["get_conn"]() as c:
@@ -164,7 +166,19 @@ def _crear_etiquetas_base() -> None:
         if not token:
             continue
         try:
-            existentes = {e.get("page_label_name"): e["id"] for e in _etiquetas_de(pid)}
+            todas = _etiquetas_de(pid)
+            existentes = {}
+            for e in sorted(todas, key=lambda e: int(e["id"]), reverse=True):
+                existentes[e.get("page_label_name")] = e["id"]  # queda la más antigua (id menor)
+            from collections import Counter
+            copias = Counter(e.get("page_label_name") for e in todas)
+            with _cfg["get_conn"]() as c:
+                c.execute("CREATE TABLE IF NOT EXISTS fb_etiquetas_dup (page_id TEXT, nombre TEXT, copias INTEGER, "
+                          "ts INTEGER, PRIMARY KEY (page_id, nombre))")
+                c.execute("DELETE FROM fb_etiquetas_dup WHERE page_id=?", (pid,))
+                for et in ETIQUETAS_NUESTRAS:
+                    if copias.get(et, 0) > 1:
+                        c.execute("INSERT INTO fb_etiquetas_dup VALUES (?,?,?,?)", (pid, et, copias[et], int(time.time())))
             creadas, fallas = 0, []
             for et in sorted(ETIQUETAS_NUESTRAS):
                 eid = existentes.get(et)
@@ -225,6 +239,38 @@ def _inventario_y_limpieza() -> None:
               " · ".join(f"{k}×{v}" for k, v in sin_ad), flush=True)
 
 
+def _estado_sistema(clave: str, valor: str) -> None:
+    """Último estado conocido de algo del sistema (tokens, suscripciones) para la revisión periódica."""
+    try:
+        with _cfg["get_conn"]() as c:
+            c.execute("CREATE TABLE IF NOT EXISTS fb_sistema (clave TEXT PRIMARY KEY, valor TEXT, ts INTEGER)")
+            c.execute("INSERT OR REPLACE INTO fb_sistema VALUES (?,?,?)", (clave, valor, int(time.time())))
+    except Exception:
+        pass
+
+
+def _chequear_token(pid: str, tok: str) -> str:
+    """'OK' o la descripción del problema (sin mostrar el token)."""
+    app_id = os.environ.get("META_APP_ID") or "1147303537768031"
+    app_tok = f"{app_id}|{os.environ.get('META_APP_SECRET', '')}"
+    necesarios = {"pages_messaging", "pages_manage_metadata", "pages_read_engagement", "pages_manage_engagement"}
+    try:
+        r = requests.get(f"{GRAPH}/debug_token", params={"input_token": tok, "access_token": app_tok}, timeout=10)
+        d = (r.json() or {}).get("data") or {}
+        if not d.get("is_valid"):
+            err = (d.get("error") or r.json().get("error") or {})
+            return f"inválido: {str(err.get('message', ''))[:90]}"
+        faltan = sorted(necesarios - set(d.get("scopes") or []))
+        if faltan:
+            return f"le faltan permisos: {', '.join(faltan)}"
+        vence = int(d.get("expires_at") or 0)
+        if vence and vence - time.time() < 7 * 86400:
+            return f"vence en {max(0, int((vence - time.time()) / 86400))} días"
+        return "OK"
+    except Exception as e:
+        return f"no se pudo verificar ({type(e).__name__})"
+
+
 def _revisar_tokens() -> None:
     """Al arrancar: confirma en el log que cada token de página funciona (sin mostrar los tokens)."""
     _tokens_desde_usuario()
@@ -243,12 +289,14 @@ def _revisar_tokens() -> None:
             if not d.get("is_valid"):
                 err = (d.get("error") or r.json().get("error") or {})
                 print(f"[messenger] token FALLA {pid}: inválido · {str(err.get('message', ''))[:90]}", flush=True)
+                _estado_sistema(f"token:{pid}", "inválido")
                 continue
             scopes = set(d.get("scopes") or [])
             faltan = sorted(necesarios - scopes)
             pagina_ok = str(d.get("profile_id") or pid) == pid
             app_ok = str(d.get("app_id")) == app_id
             estado = "OK" if not faltan and pagina_ok and app_ok else "INCOMPLETO"
+            _estado_sistema(f"token:{pid}", "OK" if estado == "OK" else f"incompleto (faltan {','.join(faltan) or '-'})")
             print(f"[messenger] token {estado} {pid} · tipo {d.get('type')} · app_ok={app_ok} · "
                   f"pagina_ok={pagina_ok} · vence={d.get('expires_at') or 0} · "
                   f"faltan={','.join(faltan) or '-'} · permisos={','.join(sorted(scopes))}", flush=True)
@@ -387,8 +435,8 @@ def _marcar_no_disponible(page_id: str, psid: str) -> None:
     _no_disp.add((page_id, psid))
     try:
         with _cfg["get_conn"]() as c:
-            c.execute("UPDATE fb_estado SET recordatorios = 2, tarjeta = ? WHERE page_id=? AND psid=?",
-                      (int(time.time()), page_id, psid))
+            c.execute("UPDATE fb_estado SET recordatorios = ?, tarjeta = ? WHERE page_id=? AND psid=?",
+                      (N_RECORDATORIOS, int(time.time()), page_id, psid))
     except Exception:
         pass
     print(f"[messenger] {hashlib.sha256(psid.encode()).hexdigest()[:8]} ya no está disponible en Messenger (#551): se deja de escribirle", flush=True)
@@ -450,8 +498,7 @@ def _boton_llamar(page_id: str, psid: str, idioma: str, texto: str = "") -> bool
         return False
     token = _token(page_id)
     titulo = f"({tel[2:5]}) {tel[5:8]}-{tel[8:]}"
-    cuerpo = texto or ("📞 LLAMA AHORA\nSi al llamar escuchas un mensaje en inglés, presiona 1 para continuar."
-                       if idioma == "es" else "📞 CALL NOW")
+    cuerpo = texto or (TARJETA_ES if idioma == "es" else TARJETA_EN)
     try:
         r = requests.post(f"{GRAPH}/me/messages", params={"access_token": token}, timeout=15, json={
             "recipient": {"id": psid}, "messaging_type": "RESPONSE",
@@ -460,12 +507,14 @@ def _boton_llamar(page_id: str, psid: str, idioma: str, texto: str = "") -> bool
                 "buttons": [{"type": "phone_number", "title": titulo, "payload": tel}]}}}})
     except Exception as e:
         print(f"[messenger] error botón: {type(e).__name__}", flush=True)
+        _metrica(page_id, "error_boton")
         return False
     if r.status_code != 200:
         if _codigo_meta(r) in _NO_DISPONIBLE:
             _marcar_no_disponible(page_id, psid)
         else:
             print(f"[messenger] error botón ({r.status_code}): {r.text[:200]}", flush=True)
+            _metrica(page_id, "error_boton")
     return r.status_code == 200
 
 
@@ -663,16 +712,27 @@ def _bucle_oficina() -> None:
         time.sleep(int(os.environ.get("OFICINA_CADA_SEG") or 600))
 
 
+# Texto de la tarjeta de llamar. El sistema de llamadas pide el código postal de 5 dígitos justo después
+# del idioma; muchos no lo marcan y la llamada se pierde (≈1 de cada 5 en nov-2026), por eso se recuerda siempre.
+TARJETA_ES = ("📞 LLAMA AHORA\nAl llamar presiona 1 para español y luego marca tu código postal de 5 dígitos.")
+TARJETA_EN = "📞 CALL NOW\nHave your 5-digit zip code ready: the call will ask you to type it."
+
 _RECORDATORIOS = {
     # (minutos desde el último mensaje de la persona, texto) — siempre dentro de la ventana de 24 h de Meta
     "es": [(30, "¿Todavía buscas dentista? 🦷 Llámanos y te conectamos con uno cerca de ti. "
-                "Si al llamar escuchas un mensaje en inglés, presiona 1 para continuar."),
+                "Al llamar presiona 1 para español y marca tu código postal de 5 dígitos."),
+           (3 * 60, "¿Pudiste llamarnos? 😊 Si la llamada se cortó, intenta de nuevo: presiona 1 para español "
+                    "y marca tu código postal de 5 dígitos cuando te lo pidan."),
            (22 * 60, "Solo para recordarte 😊 Seguimos aquí para ayudarte a encontrar dentista en tu zona. "
-                     "Toca el botón para llamar. Si escuchas un mensaje en inglés, presiona 1.")],
-    "en": [(30, "Still looking for a dentist? 🦷 Give us a call and we'll connect you with one near you."),
+                     "Toca el botón para llamar: presiona 1 y marca tu código postal de 5 dígitos.")],
+    "en": [(30, "Still looking for a dentist? 🦷 Give us a call and we'll connect you with one near you. "
+                "Have your 5-digit zip code ready."),
+           (3 * 60, "Were you able to reach us? 😊 If the call dropped, try again and type your 5-digit zip "
+                    "code when the call asks for it."),
            (22 * 60, "Just a quick reminder 😊 We're still here to help you find a dentist in your area. "
-                     "Tap the button to call.")],
+                     "Tap the button to call and have your 5-digit zip code ready.")],
 }
+N_RECORDATORIOS = len(_RECORDATORIOS["es"])
 
 
 def _bucle_recordatorios() -> None:
@@ -685,8 +745,10 @@ def _bucle_recordatorios() -> None:
 
 
 _AVISO_APERTURA = {
-    "es": "¡Hola! 😊 Ya estamos disponibles. Llámanos y te conectamos con un dentista en tu área.",
-    "en": "Hi! 😊 We're open now. Give us a call and we'll connect you with a dentist in your area.",
+    "es": "¡Hola! 😊 Ya estamos disponibles. Llámanos y te conectamos con un dentista en tu área. "
+          "Al llamar presiona 1 para español y marca tu código postal de 5 dígitos.",
+    "en": "Hi! 😊 We're open now. Give us a call and we'll connect you with a dentist in your area. "
+          "Have your 5-digit zip code ready.",
 }
 
 
@@ -745,29 +807,56 @@ def _enviar_recordatorios() -> None:
     ahora = int(time.time())
     with _cfg["get_conn"]() as c:
         filas = c.execute("""SELECT page_id, psid, recordatorios, ult_usuario, idioma FROM fb_estado
-                             WHERE pausado = 0 AND ult_usuario > ? AND recordatorios < 2""",
-                          (ahora - 23 * 3600 - 1800,)).fetchall()
+                             WHERE pausado = 0 AND ult_usuario > ? AND recordatorios < ?""",
+                          (ahora - 23 * 3600 - 1800, N_RECORDATORIOS)).fetchall()
     for page_id, psid, n, ult, idioma in filas:
         if _modo(page_id) != "responder" or _otra_app_reciente(page_id, psid):
             continue
         idioma = idioma if idioma in _RECORDATORIOS else "es"
-        minutos, texto = _RECORDATORIOS[idioma][n]
-        if ahora - ult < minutos * 60 or ahora - ult > 23 * 3600 + 1800:
-            continue  # todavía no toca, o ya se cerró la ventana de 24 h
+        pasados = ahora - ult
+        if pasados > 23 * 3600 + 1800:
+            continue  # ya se cerró la ventana de 24 h de Meta
+        # El paso más avanzado que ya toca (si un paso se saltó por estar fuera de horario, se manda solo el
+        # último que corresponde, nunca dos recordatorios seguidos).
+        k = max((i for i, (minutos, _) in enumerate(_RECORDATORIOS[idioma]) if i >= n and pasados >= minutos * 60),
+                default=None)
+        if k is None:
+            continue  # todavía no toca
+        texto = _RECORDATORIOS[idioma][k][1]
         enviado = _boton_llamar(page_id, psid, idioma, texto)
         _metrica(page_id, "recordatorios" if enviado else _fallo(page_id, psid))
+        if enviado:
+            _metrica(page_id, f"recordatorio_{k + 1}")
         with _cfg["get_conn"]() as c:
             c.execute("UPDATE fb_estado SET recordatorios = ? WHERE page_id = ? AND psid = ?",
-                      (n + 1, page_id, psid))
-        print(f"[messenger] recordatorio {n + 1} a {hashlib.sha256(psid.encode()).hexdigest()[:8]} "
+                      (k + 1, page_id, psid))
+        print(f"[messenger] recordatorio {k + 1} a {hashlib.sha256(psid.encode()).hexdigest()[:8]} "
               f"({idioma}) enviado={enviado}", flush=True)
 
 
 ETIQUETA_MANUAL = os.environ.get("MESSENGER_ETIQUETA_MANUAL") or "Sugerir zip"
 
 
-def _etiquetar(page_id: str, psid: str, nombre: str, reintento: bool = True) -> bool:
-    """Pone una etiqueta de la bandeja de Meta Business Suite al chat (para filtrarlo y atenderlo a mano)."""
+def _id_etiqueta(page_id: str, nombre: str, crear: bool = True) -> str | None:
+    """Id de la etiqueta. Si hay copias con el mismo nombre se usa SIEMPRE la más antigua (id menor), para que
+    todos los chats queden en la misma y el filtro de Business Suite los muestre juntos."""
+    copias = sorted((e for e in _etiquetas_de(page_id) if e.get("page_label_name") == nombre),
+                    key=lambda e: int(e["id"]))
+    if copias:
+        return str(copias[0]["id"])
+    if not crear:
+        return None
+    r = requests.post(f"{GRAPH}/me/custom_labels", params={"access_token": _token(page_id)}, timeout=10,
+                      json={"page_label_name": nombre})
+    eid = (r.json() or {}).get("id")
+    if not eid:
+        print(f"[messenger] no pude crear la etiqueta '{nombre}' en {page_id}: {r.text[:200]}", flush=True)
+    return str(eid) if eid else None
+
+
+def _etiquetar(page_id: str, psid: str, nombre: str, reintento: bool = True) -> bool | None:
+    """Pone una etiqueta de la bandeja de Meta Business Suite al chat (para filtrarlo y atenderlo a mano).
+    True = puesta · False = falló · None = Meta no la acepta para ESE chat todavía (se reintenta luego)."""
     token = _token(page_id)
     if not token:
         return False
@@ -775,44 +864,73 @@ def _etiquetar(page_id: str, psid: str, nombre: str, reintento: bool = True) -> 
         with _cfg["get_conn"]() as c:
             c.execute("CREATE TABLE IF NOT EXISTS fb_etiquetas (page_id TEXT, nombre TEXT, id TEXT, PRIMARY KEY (page_id, nombre))")
             f = c.execute("SELECT id FROM fb_etiquetas WHERE page_id=? AND nombre=?", (page_id, nombre)).fetchone()
-        eid = f[0] if f else None
+        eid = f[0] if f else _id_etiqueta(page_id, nombre)
         if not eid:
-            r = requests.get(f"{GRAPH}/me/custom_labels", params={"access_token": token, "fields": "page_label_name",
-                                                                   "limit": 200}, timeout=10)
-            eid = next((x["id"] for x in (r.json() or {}).get("data", []) if x.get("page_label_name") == nombre), None)
-            if not eid:
-                r = requests.post(f"{GRAPH}/me/custom_labels", params={"access_token": token}, timeout=10,
-                                  json={"page_label_name": nombre})
-                eid = (r.json() or {}).get("id")
-                if not eid:
-                    print(f"[messenger] no pude crear la etiqueta en {page_id}: {r.text[:200]}", flush=True)
-                    return False
+            _metrica(page_id, "etiqueta_fallo")
+            return False
+        if not f:
             with _cfg["get_conn"]() as c:
                 c.execute("INSERT OR REPLACE INTO fb_etiquetas VALUES (?,?,?)", (page_id, nombre, str(eid)))
         r = requests.post(f"{GRAPH}/{eid}/label", params={"access_token": token}, timeout=20, json={"user": psid})
-        if r.status_code != 200 and '"code":100' in r.text.replace(" ", ""):
-            # ¿La etiqueta existe? Si existe, el problema es ese chat (la persona bloqueó o borró la conversación,
-            # o Meta ya no deja asociarla): no es falla de la página y no vale la pena insistir.
-            existe = requests.get(f"{GRAPH}/{eid}", params={"access_token": token, "fields": "page_label_name"},
-                                  timeout=10).status_code == 200
-            if existe:
-                print(f"[messenger] chat {hashlib.sha256(psid.encode()).hexdigest()[:8]} de {page_id} no acepta etiquetas "
-                      f"(persona no disponible); se omite '{nombre}'", flush=True)
-                return False
+        if r.status_code == 200:
+            return True
+        if _codigo_meta(r) == 100:
+            # ¿La etiqueta sigue existiendo? Se verifica con la lista de la página (pedir la etiqueta por id
+            # directamente no siempre funciona y antes hacía creer que estaba borrada).
+            vigente = _id_etiqueta(page_id, nombre, crear=False)
+            if vigente == str(eid):
+                # La etiqueta está bien: es ese chat el que Meta todavía no deja etiquetar (conversación recién
+                # abierta desde un anuncio, persona no disponible…). Se reintenta más tarde.
+                return None
             if reintento:
-                # El id guardado ya no existe: lo olvidamos y lo buscamos/creamos de nuevo.
                 with _cfg["get_conn"]() as c:
                     c.execute("DELETE FROM fb_etiquetas WHERE page_id=? AND nombre=?", (page_id, nombre))
                 return _etiquetar(page_id, psid, nombre, reintento=False)
-        if r.status_code != 200:
-            print(f"[messenger] no pude etiquetar '{nombre}' en {page_id}: {r.text[:200]}", flush=True)
-        return r.status_code == 200
+        print(f"[messenger] no pude etiquetar '{nombre}' en {page_id}: {r.text[:200]}", flush=True)
+        _metrica(page_id, "etiqueta_fallo")
+        return False
     except Exception as e:
         print(f"[messenger] error etiqueta: {type(e).__name__}", flush=True)
+        _metrica(page_id, "etiqueta_fallo")
         return False
 
 
-def _etiquetar_una_vez(page_id: str, psid: str, nombre: str) -> bool:
+_REINTENTOS_ETIQUETA = (120, 900, 3600)  # segundos tras la falla: 2 min, 15 min, 1 h
+
+
+def _pendiente_etiqueta(page_id: str, psid: str, nombre: str, intento: int = 0) -> None:
+    """Guarda la etiqueta que Meta no aceptó y la reintenta sola (y también cuando la persona vuelva a escribir)."""
+    with _cfg["get_conn"]() as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS fb_etiquetas_pendientes (page_id TEXT, psid TEXT, nombre TEXT,
+                     intentos INTEGER, ts INTEGER, PRIMARY KEY (page_id, psid, nombre))""")
+        c.execute("INSERT OR REPLACE INTO fb_etiquetas_pendientes VALUES (?,?,?,?,?)",
+                  (page_id, psid, nombre, intento, int(time.time())))
+    if intento < len(_REINTENTOS_ETIQUETA):
+        def luego():
+            time.sleep(_REINTENTOS_ETIQUETA[intento])
+            _reintentar_etiquetas(page_id, psid, solo=nombre)
+        threading.Thread(target=luego, daemon=True).start()
+
+
+def _reintentar_etiquetas(page_id: str, psid: str, solo: str | None = None) -> None:
+    try:
+        with _cfg["get_conn"]() as c:
+            c.execute("""CREATE TABLE IF NOT EXISTS fb_etiquetas_pendientes (page_id TEXT, psid TEXT, nombre TEXT,
+                         intentos INTEGER, ts INTEGER, PRIMARY KEY (page_id, psid, nombre))""")
+            filas = c.execute("SELECT nombre, intentos FROM fb_etiquetas_pendientes WHERE page_id=? AND psid=?"
+                              + (" AND nombre=?" if solo else ""),
+                              (page_id, psid, solo) if solo else (page_id, psid)).fetchall()
+        for nombre, intentos in filas:
+            with _cfg["get_conn"]() as c:
+                c.execute("DELETE FROM fb_etiquetas_pendientes WHERE page_id=? AND psid=? AND nombre=?",
+                          (page_id, psid, nombre))
+            _etiquetar_una_vez(page_id, psid, nombre, intento=intentos + 1)
+    except Exception as e:
+        print(f"[messenger] reintento de etiquetas: {type(e).__name__}", flush=True)
+
+
+def _etiquetar_una_vez(page_id: str, psid: str, nombre: str, intento: int = 0) -> bool:
+    quien = hashlib.sha256(psid.encode()).hexdigest()[:8]
     with _cfg["get_conn"]() as c:
         c.execute("CREATE TABLE IF NOT EXISTS fb_etiquetado (page_id TEXT, psid TEXT, nombre TEXT, ts INTEGER, "
                   "PRIMARY KEY (page_id, psid, nombre))")
@@ -823,9 +941,19 @@ def _etiquetar_una_vez(page_id: str, psid: str, nombre: str) -> bool:
     if ok:
         with _cfg["get_conn"]() as c:
             c.execute("INSERT OR IGNORE INTO fb_etiquetado VALUES (?,?,?,?)", (page_id, psid, nombre, int(time.time())))
-        print(f"[messenger] etiqueta '{nombre}' · página {page_id} · chat {hashlib.sha256(psid.encode()).hexdigest()[:8]}",
-              flush=True)
-    return ok
+        if intento:
+            _metrica(page_id, "etiqueta_reintento_ok")
+        print(f"[messenger] etiqueta '{nombre}' · página {page_id} · chat {quien}"
+              f"{f' (reintento {intento})' if intento else ''}", flush=True)
+        return True
+    if ok is None:
+        if intento <= len(_REINTENTOS_ETIQUETA):
+            _pendiente_etiqueta(page_id, psid, nombre, intento)
+            print(f"[messenger] chat {quien} de {page_id} aún no acepta '{nombre}': se reintenta luego", flush=True)
+        else:
+            _metrica(page_id, "etiqueta_fallo")
+            print(f"[messenger] chat {quien} de {page_id}: '{nombre}' no se pudo poner tras {intento} reintentos", flush=True)
+    return False
 
 
 ETIQUETAS_IDIOMA = {"es": "Español", "en": "Inglés"}
@@ -943,6 +1071,7 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str, forzar: bool = Fal
         res = _cfg["responder"](_cfg["chat_request"](subscriber_id=f"fb:{page_id}:{psid}", last_input_text=texto))
     except Exception as e:
         print(f"[messenger] error de la IA: {type(e).__name__}", flush=True)
+        _metrica(page_id, "error_ia")
         return
     idioma = res.get("language") if res.get("language") in ("en", "es") else "es"
     with _cfg["get_conn"]() as c:
@@ -958,7 +1087,9 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str, forzar: bool = Fal
     for nombre in res.get("tags") or []:
         _etiquetar_una_vez(page_id, psid, nombre)
     _etiqueta_idioma(page_id, psid, res)
+    _reintentar_etiquetas(page_id, psid)
     if res.get("action") == "pause" and res.get("response"):
+        _metrica(page_id, "handoff_zip")
         etiquetado = _etiquetar_una_vez(page_id, psid, ETIQUETA_MANUAL)
         print(f"[messenger] NECESITA HUMANO · página {page_id} · chat {quien} · etiqueta={etiquetado}", flush=True)
     if ok and res.get("action") == "respond":
