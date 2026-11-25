@@ -127,58 +127,94 @@ def zip_language(row):
 
 
 def observe(pings, calls, now):
-    call_map = {}
-    for c in calls:
-        cid = field(c, "id", "CallId", "callId")
-        if cid:
-            call_map[str(cid)] = c
     zip_cases = defaultdict(set)
     eligible = []
+    won = defaultdict(list)
     for p in pings:
         cid, b = field(p, "CallId", "callId"), buy_key(p)
         key = zip_language(p)
         t = instant(field(p, "createdAt", "@timestamp", "date"))
         if not cid or not key or not t or not b:
             continue
-        zip_cases[str(cid)].add(key)
-        eligible.append((p, str(cid), b, key, t))
+        cid = str(cid)
+        zip_cases[cid].add(key)
+        eligible.append((p, cid, b, key, t))
+        if truth(field(p, "PingWonCall")):
+            won[cid].append((p, b, key))
+    verified_calls = []
+    for c in calls:
+        cid = field(c, "id", "CallId", "callId")
+        t = instant(field(c, "createdAt", "@timestamp", "date"))
+        dest = field(c, "DestinationId", "destinationId")
+        name = str(field(c, "DestinationName") or "").strip()
+        if not cid or not t or not (dest or name):
+            continue
+        cid = str(cid)
+        key, buyer = zip_language(c), buy_key(c)
+        # Any available explicit ZIP/plan must be consistent. Only a winning ping for
+        # the same destination can supply missing call dimensions, never a losing quote.
+        matching = {(b, k) for p, b, k in won[cid]
+                    if (dest == field(p, "DestinationId") if dest and field(p, "DestinationId")
+                        else bool(name and name == str(field(p, "DestinationName") or "").strip()))}
+        if key:
+            zip_cases[cid].add(key)
+        if (not key or not buyer) and len(matching) == 1:
+            match_b, match_key = next(iter(matching))
+            supplied_zip = str(field(c, "ZipCode") or "").strip()
+            if ((not buyer or buyer == match_b) and (not key or key == match_key)
+                    and (not supplied_zip or supplied_zip == match_key[0])
+                    and (key or not any(field(c, n) for n in ("RoutingPlanName", "routingPlanName",
+                                                               "IVRZip", "VisitorZipCode")))):
+                buyer, key = buyer or match_b, key or match_key
+        if key and buyer:
+            verified_calls.append((c, cid, buyer, key, t))
     # A call with competing ZIP/plan tags is ambiguous, not multiple demand.
     grouped = defaultdict(dict)
-    for p, cid, b, (z, lang), t in eligible:
+
+    def add(row, cid, b, key, t):
         if len(zip_cases[cid]) != 1:
-            continue
-        state = str(field(p, "StateCodeFromZipCode") or "").strip().upper()[:2]
+            return None
+        z, lang = key
+        state = str(field(row, "StateCodeFromZipCode") or "").strip().upper()[:2]
         case = grouped[z, lang, b].setdefault(cid, {
             "state": state, "last": t, "offer": None, "connected": False, "billable": False,
             "no_bid": False, "technical": False, "in_progress": False, "connect_signal_at": None,
+            "covered_signal_at": None,
         })
         case["last"] = max(t, case["last"])
+        case["state"] = case["state"] or state
+        return case
+
+    for p, cid, b, key, t in eligible:
+        case = add(p, cid, b, key, t)
+        if case is None:
+            continue
         code = str(field(p, "PingResponseCode") or "").lower()
         status = str(field(p, "PingCode") or "")
         if "1006" in code or "no-target" in code or (b.lower() == "ray advertising" and "4004" in (code + " " + status)):
             case["no_bid"] = True
-        if "1004" in code or "429" in status or any(truth(field(p, key)) for key in ("PingTimeout", "PingApiFailed", "PingRateLimited")):
+        if "1004" in code or "429" in status or any(truth(field(p, k)) for k in ("PingTimeout", "PingApiFailed", "PingRateLimited")):
             case["technical"] = True
-        # Callback/static downstream tagged accepted without a positive bid isn't a fresh RTB offer.
-        if not truth(field(p, "PingAccepted")) or not positive(field(p, "PingBidAmount", "PingRevenueAmount")):
+        if truth(field(p, "PingAccepted")) and positive(field(p, "PingBidAmount", "PingRevenueAmount")):
+            case["offer"] = max(t, case["offer"] or t)
+
+    for c, cid, b, key, t in verified_calls:
+        case = add(c, cid, b, key, t)
+        if case is None:
             continue
-        case["offer"] = max(t, case["offer"] or t)
-        c = call_map.get(cid)
-        if c and truth(field(p, "PingWonCall")):
-            dest = field(p, "DestinationId")
-            chosen = field(c, "DestinationId", "destinationId")
-            same = (dest == chosen) if dest and chosen else (
-                str(field(p, "DestinationName") or "").strip() == str(field(c, "DestinationName") or "").strip()
-                and bool(field(p, "DestinationName")))
-            if not same:
-                continue
-            call_status = str(field(c, "callStatus", "CallStatus", "status")).upper()
-            if call_status == "COMPLETED" and positive(field(c, "CallDurationFromConnect", "callDurationFromConnect")):
-                case["connected"] = True
-                case["connect_signal_at"] = max(t, case["connect_signal_at"] or t)
-                case["billable"] = positive(field(c, "CallRevenue", "RevenueAmount", "revenue"))
-            elif call_status == "IN_PROGRESS":
-                case["in_progress"] = True
+        status = str(field(c, "callStatus", "CallStatus", "status") or "").upper()
+        duration = field(c, "CallDurationFromConnect", "callDurationFromConnect")
+        if status == "COMPLETED" and positive(duration):
+            case["connected"] = True
+            case["connect_signal_at"] = max(t, case["connect_signal_at"] or t)
+            billable = truth(field(c, "CallBillable", "callBillable"))
+            case["billable"] = case["billable"] or billable
+            # A 1–2 second nonbillable dial is still a connection, but not a repeatable
+            # sign that clinics can actually handle callers.
+            if billable or float(duration) > 2:
+                case["covered_signal_at"] = max(t, case["covered_signal_at"] or t)
+        elif status == "IN_PROGRESS":
+            case["in_progress"] = True
     result = []
     for (z, lang, buyer), attempts in grouped.items():
         values = list(attempts.values())
@@ -187,7 +223,7 @@ def observe(pings, calls, now):
         no_bid = sum(x["no_bid"] and not x["offer"] and not x["technical"] for x in values)
         recent_offer = max((x["offer"] for x in values if x["offer"]), default=None)
         last = max(x["last"] for x in values)
-        recent_connects = sum(x["connect_signal_at"] is not None and now - x["connect_signal_at"] <= timedelta(minutes=30)
+        recent_connects = sum(x["covered_signal_at"] is not None and now - x["covered_signal_at"] <= timedelta(minutes=30)
                               for x in values)
         if recent_connects >= 2 and len(values) >= 3:
             status = "Señal repetida"
