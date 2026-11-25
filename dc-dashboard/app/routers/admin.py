@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -48,6 +49,38 @@ def overview(request: Request, db: Session = Depends(get_db), user: User = Depen
     return templates.TemplateResponse(
         request, "admin/overview.html",
         {"user": user, "partners": partners, "media_buyers": media_buyers, "last_sync": last_sync},
+    )
+
+
+@router.get("/coverage")
+def coverage_radar(request: Request, zip_code: str = "", lang: str = "", buyer: str = "",
+                   user: User = Depends(get_current_user)):
+    # The router enforces admin authorization before this handler can fetch any data.
+    from app.callgrid.coverage import ZIP_RE, snapshot
+    from app.config import CALLGRID_API_KEY, CALLGRID_ORG_ID
+
+    data = snapshot(CALLGRID_API_KEY, CALLGRID_ORG_ID)
+    zip_code = zip_code.strip()[:5]
+    if zip_code and not ZIP_RE.fullmatch(zip_code):
+        zip_code = ""
+    lang = lang if lang in ("ES", "EN") else ""
+    et = ZoneInfo("America/New_York")
+
+    def display(value):
+        return datetime.fromisoformat(value).astimezone(et).strftime("%d/%m %H:%M") if value else None
+
+    all_rows = data.get("rows", [])
+    buyers = sorted({row["buyer"] for row in all_rows})
+    buyer = buyer if buyer in buyers else ""
+    rows = [{**row, "latest_connected_et": display(row["latest_connected"])}
+            for row in all_rows
+            if (not zip_code or row["zip"] == zip_code) and (not lang or row["language"] == lang)
+            and (not buyer or row["buyer"] == buyer)]
+    return templates.TemplateResponse(
+        request, "admin/coverage.html",
+        {"user": user, "snapshot": data, "checked_at": display(data.get("as_of")), "rows": rows,
+         "buyers": buyers, "lang": lang, "buyer": buyer, "zip_code": zip_code},
+        headers={"Cache-Control": "private, no-store"},
     )
 
 
