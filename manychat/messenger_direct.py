@@ -72,6 +72,7 @@ def configurar(responder, chat_request, get_conn, detectar_idioma=None, abierto=
     threading.Thread(target=_bucle_oficina, daemon=True).start()
     threading.Thread(target=_inventario_y_limpieza, daemon=True).start()
     threading.Thread(target=_crear_etiquetas_base, daemon=True).start()
+    threading.Thread(target=_rehacer_idiomas, daemon=True).start()
 
 
 _ultima_purga = [0.0]
@@ -237,6 +238,78 @@ def _inventario_y_limpieza() -> None:
         sin_ad = [(k, v) for k, v in cuenta.most_common() if not k.startswith("ad_id.")]
         print(f"[messenger] INVENTARIO {nombre}: {len(ets)} etiquetas ({sum(v for k, v in cuenta.items() if k.startswith('ad_id.'))} de anuncios) · " +
               " · ".join(f"{k}×{v}" for k, v in sin_ad), flush=True)
+
+
+def _rehacer_idiomas() -> None:
+    """Una sola vez por valor de MESSENGER_REHACER_IDIOMAS (p. ej. "2026-11-25"): en cada página borra TODAS las
+    etiquetas de idioma (Español/Espanol/Inglés/Ingles, con o sin acento y sus copias), crea una "Español" y una
+    "Inglés" nuevas y se las vuelve a poner a cada contacto según el idioma que el bot tiene guardado.
+    Los contactos que el bot no conoce (anteriores a la migración desde ManyChat) quedan sin etiqueta de idioma."""
+    marca = (os.environ.get("MESSENGER_REHACER_IDIOMAS") or "").strip()
+    if not marca:
+        return
+    with _cfg["get_conn"]() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS fb_sistema (clave TEXT PRIMARY KEY, valor TEXT, ts INTEGER)")
+        f = c.execute("SELECT valor FROM fb_sistema WHERE clave='rehacer_idiomas'").fetchone()
+    if f and f[0] == marca:
+        return  # ya se hizo con esta marca
+    time.sleep(150)  # después de _crear_etiquetas_base
+    import unicodedata
+
+    def plano(t: str) -> str:
+        return "".join(ch for ch in unicodedata.normalize("NFKD", t or "") if not unicodedata.combining(ch)).strip().lower()
+
+    with _cfg["get_conn"]() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS fb_etiquetas (page_id TEXT, nombre TEXT, id TEXT, PRIMARY KEY (page_id, nombre))")
+        c.execute("CREATE TABLE IF NOT EXISTS fb_etiquetado (page_id TEXT, psid TEXT, nombre TEXT, ts INTEGER, "
+                  "PRIMARY KEY (page_id, psid, nombre))")
+    errores = 0
+    for pid, nombre in PAGINAS.items():
+        if not _token(pid):
+            continue
+        try:
+            viejas = [e for e in _etiquetas_de(pid) if plano(e.get("page_label_name")) in ("espanol", "ingles")]
+            borradas = 0
+            for e in viejas:
+                r = requests.delete(f"{GRAPH}/{e['id']}", params={"access_token": _token(pid)}, timeout=15)
+                borradas += r.status_code == 200
+            with _cfg["get_conn"]() as c:
+                for tabla in ("fb_etiquetas", "fb_etiquetado"):
+                    try:
+                        c.execute(f"DELETE FROM {tabla} WHERE page_id=? AND nombre IN ('Español','Inglés')", (pid,))
+                    except Exception:
+                        pass
+                try:
+                    c.execute("DELETE FROM fb_etiquetas_pendientes WHERE page_id=? AND nombre IN ('Español','Inglés')", (pid,))
+                except Exception:
+                    pass
+                contactos: dict = {}
+                for psid, idioma in c.execute("SELECT psid, idioma FROM fb_estado WHERE page_id=?", (pid,)):
+                    if idioma in ETIQUETAS_IDIOMA:
+                        contactos[psid] = idioma
+                for sid, idioma in c.execute("SELECT subscriber_id, language FROM subscriber_language "
+                                             "WHERE subscriber_id LIKE ?", (f"fb:{pid}:%",)):
+                    if idioma in ETIQUETAS_IDIOMA:
+                        contactos[sid.split(":", 2)[2]] = idioma  # el idioma guardado por la IA manda
+            for et in ETIQUETAS_IDIOMA.values():
+                eid = _id_etiqueta(pid, et)
+                if eid:
+                    with _cfg["get_conn"]() as c:
+                        c.execute("INSERT OR REPLACE INTO fb_etiquetas VALUES (?,?,?)", (pid, et, str(eid)))
+            ok = no = 0
+            for psid, idioma in contactos.items():
+                if _etiquetar_una_vez(pid, psid, ETIQUETAS_IDIOMA[idioma]):
+                    ok += 1
+                else:
+                    no += 1
+                time.sleep(0.2)
+            print(f"[messenger] IDIOMAS REHECHOS {nombre}: borradas {borradas} de {len(viejas)} viejas · "
+                  f"{ok} contactos etiquetados · {no} no aceptaron", flush=True)
+        except Exception as e:
+            errores += 1
+            print(f"[messenger] IDIOMAS REHECHOS {nombre}: error {type(e).__name__}: {str(e)[:120]}", flush=True)
+    if not errores:
+        _estado_sistema("rehacer_idiomas", marca)
 
 
 def _estado_sistema(clave: str, valor: str) -> None:
