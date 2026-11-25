@@ -34,7 +34,8 @@ router = APIRouter()
 CLAVES = ("respuestas", "tarjetas", "recordatorios", "recordatorio_1", "recordatorio_2", "recordatorio_3",
           "avisos_apertura", "errores_envio", "no_disponible", "error_ia", "error_boton", "etiqueta_fallo",
           "etiqueta_reintento_ok", "handoff_zip", "comentarios", "errores_comentario", "en_espera_fuera_horario",
-          "fuera_horario_a_mano", "dejado_a_otra_app")
+          "fuera_horario_a_mano", "dejado_a_otra_app",
+          "sin_boton_fuera_de_servicio", "sin_boton_pidiendo_zip", "sin_boton_ya_resuelto")
 
 _TEL = re.compile(r"\+?\d[\d\s().-]{6,}\d")
 _MAIL = re.compile(r"\S+@\S+\.\S+")

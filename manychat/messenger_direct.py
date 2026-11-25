@@ -1092,7 +1092,15 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str, forzar: bool = Fal
         _metrica(page_id, "handoff_zip")
         etiquetado = _etiquetar_una_vez(page_id, psid, ETIQUETA_MANUAL)
         print(f"[messenger] NECESITA HUMANO · página {page_id} · chat {quien} · etiqueta={etiquetado}", flush=True)
-    if ok and res.get("action") == "respond":
+    if ok and res.get("action") == "respond" and res.get("boton") is False:
+        # La respuesta no invita a llamar (fuera de servicio, pidiendo el ZIP o ya resuelto): ni botón ni
+        # recordatorios hasta que la persona vuelva a escribir.
+        with _cfg["get_conn"]() as c:
+            c.execute("UPDATE fb_estado SET recordatorios=?, avisar=0 WHERE page_id=? AND psid=?",
+                      (N_RECORDATORIOS, page_id, psid))
+        _metrica(page_id, f"sin_boton_{res.get('motivo_sin_boton') or 'otro'}")
+        print(f"[messenger] {quien}: sin botón ni recordatorios ({res.get('motivo_sin_boton')})", flush=True)
+    elif ok and res.get("action") == "respond":
         if res.get("abierto", True):
             _programar_tarjeta(page_id, psid, idioma)
         else:

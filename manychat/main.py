@@ -386,6 +386,20 @@ NO_ANSWER_RE = re.compile(
 
 ZIP_ASK_MARKERS = ["codigo postal", "zip code", "tu zip", "el zip"]
 
+# La persona ya resolvió (ya tiene cita / ya la atendieron): no se le manda botón ni recordatorios.
+YA_RESUELTO_RE = re.compile(
+    r"(ya (tengo|me (dieron|dio|hicieron|agendaron|programaron)|agende|hice|saque|consegui|separe) (una |la |mi )?cita"
+    r"|ya (me atendi|fui atendid|me atendieron|me atendio|encontre|consegui) |ya (llame|hable) y (me|ya)"
+    r"|ya tengo (un |mi )?dentista|already (have|got|booked|made|scheduled) (an |my )?appointment"
+    r"|already (found|have|got) a dentist|i'?m all set|i already (called|went|was seen))"
+)
+# La IA le dijo que no hay servicio en su país/zona: mandar el botón de llamar contradice la respuesta.
+SIN_SERVICIO_RESP_RE = re.compile(
+    r"(solo (esta|estamos|funciona|operamos|trabajamos)[a-z ]{0,20}(en )?(los )?estados unidos|solo en (los )?(ee\.? ?uu|estados unidos)"
+    r"|only (available|operate|work)[a-z ]{0,20}in the (us|u\.s\.|united states)|no (tenemos|hay) (cobertura|servicio) (en|fuera)"
+    r"|we don'?t (have|offer) (coverage|service) (in|outside))"
+)
+
 HUMAN_AGENT_PHRASES = [
     "comuniqueme con alguien real", "comuniqueme con una persona",
     "quiero hablar con alguien real", "quiero hablar con una persona real",
@@ -1170,6 +1184,14 @@ def responder(req: ChatRequest) -> dict:
         if pedidos_previos >= 1:
             tags.append("Pide humano")
 
+    # ¿Corresponde mandar el botón de llamar y los recordatorios después de esta respuesta?
+    # No cuando la IA dijo que no hay servicio en su zona/país, cuando le está pidiendo el ZIP para buscarle
+    # otra opción (la llamada ya le falló) ni cuando la persona dice que ya lo resolvió.
+    fuera_de_servicio = bool(FUERA_USA_RE.search(norm) or SIN_SERVICIO_RESP_RE.search(normalize_text(reply)))
+    pidiendo_zip      = bool(sin_respuesta and not detected_zip and not needs_handoff)
+    ya_resuelto       = bool(YA_RESUELTO_RE.search(norm))
+    sin_boton         = fuera_de_servicio or pidiendo_zip or ya_resuelto
+
     return {
         "response":     reply,
         "action":       action,
@@ -1178,6 +1200,10 @@ def responder(req: ChatRequest) -> dict:
         "tags":         tags,
         "language_source": _lang_source,
         "abierto":      is_business_hours(),
+        # Para messenger_direct: sin botón ni recordatorios hasta que la persona vuelva a escribir.
+        "boton":        not sin_boton,
+        "motivo_sin_boton": ("fuera_de_servicio" if fuera_de_servicio else "pidiendo_zip" if pidiendo_zip
+                             else "ya_resuelto" if ya_resuelto else ""),
     }
 
 
