@@ -66,6 +66,9 @@ def endpoint_rows(api_key, org_id, endpoint, start, end):
         "organizationId": org_id, "startDate": start.strftime("%Y-%m-%dT%H:%M:%S"),
         "endDate": end.strftime("%Y-%m-%dT%H:%M:%S"), "reportTimeZone": "UTC",
         "maxItems": PAGE_SIZE, "useCursor": "true", "sortDirection": "desc",
+        "filters": json.dumps({"items": [{"operator": "AND", "rules": [
+            {"tagName": "CampaignId", "values": [CAMPAIGN], "condition": "equals"},
+        ]}]}, separators=(",", ":")),
     }
     # Filter defensively by campaign after the request too. Nothing from other campaigns is exposed or kept.
     headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
@@ -78,9 +81,12 @@ def endpoint_rows(api_key, org_id, endpoint, start, end):
         response = requests.get(f"{CALLGRID_BASE_URL}/{endpoint}", params=params, headers=headers, timeout=(3, 7))
         response.raise_for_status()
         payload = response.json()
-        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        if not isinstance(payload, dict):
             raise ValueError("invalid CallGrid report schema")
-        chunk = payload["data"]
+        data = payload.get("data")
+        chunk = data.get("items") if isinstance(data, dict) else data
+        if not isinstance(chunk, list):
+            raise ValueError("invalid CallGrid report rows")
         for row in chunk:
             if not isinstance(row, dict):
                 raise ValueError("invalid CallGrid row")
@@ -204,6 +210,22 @@ def observe(pings, calls, now):
             "state": next((x["state"] for x in values if x["state"]), ""),
         })
     return sorted(result, key=lambda r: (-r["connected"], -r["offers"], -r["attempts"], r["zip"]))
+
+
+def view_filters(rows, zip_code="", lang="", buyer=""):
+    """Preserve saved view choices even when a fresh snapshot contains no matching data."""
+    zip_code, lang, buyer = zip_code.strip(), lang.strip(), buyer.strip()
+    error = ("Introduce un ZIP exacto de cinco dígitos." if zip_code and not ZIP_RE.fullmatch(zip_code)
+             else "Selecciona ES o EN." if lang and lang not in ("ES", "EN") else "")
+    pool = {row["buyer"] for row in rows}
+    if buyer:
+        pool.add(buyer)
+    selected = [] if error else [row for row in rows
+                                 if (not zip_code or row["zip"] == zip_code)
+                                 and (not lang or row["language"] == lang)
+                                 and (not buyer or row["buyer"] == buyer)]
+    return {"rows": selected, "buyers": sorted(pool), "buyer": buyer, "lang": lang, "zip_code": zip_code,
+            "filter_error": error}
 
 
 def snapshot(api_key, org_id):

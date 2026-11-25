@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
-from app.callgrid.coverage import CAMPAIGN, endpoint_rows, observe
+from app.callgrid.coverage import CAMPAIGN, endpoint_rows, observe, view_filters
 
 NOW = datetime(2026, 11, 25, 16, 22, tzinfo=timezone.utc)
 
@@ -84,6 +84,7 @@ class CoverageTests(TestCase):
         self.assertEqual(["a","b"], [r["CallId"] for r in rows])
         self.assertEqual('[123,"abc"]', params_seen[1]["searchAfter"])
         self.assertNotIn("apiKey",params_seen[0])
+        self.assertIn(CAMPAIGN, params_seen[0]["filters"])
 
     @patch("app.callgrid.coverage.requests.get")
     def test_incomplete_without_cursor_is_not_empty_or_complete(self, get):
@@ -91,3 +92,28 @@ class CoverageTests(TestCase):
         result, complete=endpoint_rows("fake","org","ping",NOW-timedelta(minutes=30),NOW)
         self.assertFalse(complete)
         self.assertEqual(1,len(result))
+
+    def test_buyer_stays_selected_when_it_ages_out(self):
+        rows = [{"zip":"77356", "language":"ES", "buyer":"Rex Direct"}]
+        v = view_filters(rows, "77356", "ES", "1800Dentist")
+        self.assertEqual("1800Dentist", v["buyer"])
+        self.assertIn("1800Dentist", v["buyers"])
+        self.assertEqual([], v["rows"])
+
+    def test_invalid_zip_does_not_clip_or_broaden(self):
+        rows = [{"zip":"77356", "language":"ES", "buyer":"Rex Direct"}]
+        for z in ("773560", "77356-1234", "7735X"):
+            v = view_filters(rows, z, "ES")
+            self.assertEqual(z, v["zip_code"])
+            self.assertTrue(v["filter_error"])
+            self.assertEqual([], v["rows"])
+
+    @patch("app.callgrid.coverage.requests.get")
+    def test_nested_call_envelope_and_bad_shape(self, get):
+        get.return_value.json.return_value={"data":{"items":[call("a"),call("b")]},"hasMore":False}
+        rows, complete = endpoint_rows("fake","org","call",NOW-timedelta(minutes=30),NOW)
+        self.assertTrue(complete)
+        self.assertEqual(["a","b"],[r["id"] for r in rows])
+        get.return_value.json.return_value={"data":{"unexpected":[]}}
+        with self.assertRaises(ValueError):
+            endpoint_rows("fake","org","call",NOW-timedelta(minutes=30),NOW)

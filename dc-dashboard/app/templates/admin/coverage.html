@@ -14,11 +14,12 @@
     <p class="text-sm text-gray-400 mb-3">Corte: {{ checked_at }} ET. Actualización automática con la página abierta.</p>
     {% if snapshot.stale or not snapshot.complete %}<p class="card rounded p-4 text-amber-300 mb-3">Datos {% if snapshot.stale %}desactualizados{% else %}parciales{% endif %}. No sacar conclusiones de cobertura negativa de esta muestra.</p>{% endif %}
     <form method="get" class="flex flex-wrap gap-2 mb-4 items-end">
-      <label class="text-sm">ZIP<input name="zip_code" value="{{ zip_code }}" inputmode="numeric" maxlength="5" pattern="[0-9]{5}" placeholder="Todos" class="block card p-2 rounded w-28"></label>
+      <label class="text-sm">ZIP<input name="zip_code" value="{{ zip_code }}" inputmode="numeric" pattern="[0-9]{5}" placeholder="Todos" class="block card p-2 rounded w-28"></label>
       <label class="text-sm">Idioma<select name="lang" class="block card p-2 rounded"><option value="">Todos</option>{% for item in ('ES','EN') %}<option value="{{ item }}" {% if lang == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select></label>
       <label class="text-sm">Comprador<select name="buyer" class="block card p-2 rounded"><option value="">Todos</option>{% for item in buyers %}<option value="{{ item }}" {% if buyer == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select></label>
       <button type="submit" class="btn px-3 py-2 rounded">Filtrar</button>
     </form>
+    {% if filter_error %}<p role="alert" class="text-amber-300 mb-3">{{ filter_error }}</p>{% endif %}
     <div class="card rounded overflow-auto">
       <table class="w-full text-sm" aria-label="Cobertura reciente por ZIP, idioma y comprador">
         <thead><tr class="text-left border-b">
