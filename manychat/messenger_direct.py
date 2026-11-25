@@ -47,10 +47,12 @@ GRAPH = f"https://graph.facebook.com/{os.environ.get('META_API_VERSION') or 'v25
 _cfg: dict = {}
 
 
-def configurar(responder, chat_request, get_conn, detectar_idioma=None, abierto=None, proxima_apertura=None) -> None:
+def configurar(responder, chat_request, get_conn, detectar_idioma=None, abierto=None, proxima_apertura=None,
+               aviso_feriado=None, es_baja=None) -> None:
     _cfg.update(responder=responder, chat_request=chat_request, get_conn=get_conn,
                 detectar_idioma=detectar_idioma, abierto=abierto or (lambda: True),
-                proxima_apertura=proxima_apertura or (lambda lang="es": "mañana"))
+                proxima_apertura=proxima_apertura or (lambda lang="es": "mañana"),
+                aviso_feriado=aviso_feriado or (lambda lang="es": ""), es_baja=es_baja or (lambda texto: False))
     threading.Thread(target=_revisar_tokens, daemon=True).start()
     with get_conn() as c:
         c.execute("""CREATE TABLE IF NOT EXISTS fb_eventos (
@@ -79,7 +81,8 @@ _BORRAR = re.compile(r"\b(delete my data|borrar? mis datos|elimin(a|ar) mis dato
 def _purgar(c) -> None:
     """Política de privacidad: el historial se guarda máximo 90 días."""
     for sql, args in (("DELETE FROM messages WHERE created_at < datetime('now', '-90 days')", ()),
-                      ("DELETE FROM fb_eventos WHERE ts < ?", (int(time.time()) - 90 * 86400,))):
+                      ("DELETE FROM fb_eventos WHERE ts < ?", (int(time.time()) - 90 * 86400,)),
+                      ("DELETE FROM fb_avisos_feriado WHERE ts < ?", (int(time.time()) - 7 * 86400,))):
         try:
             c.execute(sql, args)
         except Exception:
@@ -438,6 +441,9 @@ def _telefono(page_id: str, idioma: str) -> str:
 
 def _boton_llamar(page_id: str, psid: str, idioma: str, texto: str = "") -> bool:
     """Tarjeta igual a la de ManyChat: '📞 CALL NOW' + botón con el número de ESA página."""
+    # Incluye las tarjetas que quedaron programadas antes de que empezara el cierre.
+    if _cfg.get("aviso_feriado", lambda: "")():
+        return False
     tel = _telefono(page_id, idioma)
     if not tel:
         print(f"[messenger] sin teléfono configurado para la página {page_id}: no envío botón", flush=True)
@@ -853,6 +859,27 @@ def _pausa(res: dict) -> int:
     return int(time.time()) if res.get("response") else 1
 
 
+def _avisar_feriado(page_id: str, psid: str, texto: str) -> None:
+    """Avisa solo al chat que escribió; si falla, otro mensaje entrante puede reintentarlo."""
+    quien = hashlib.sha256(psid.encode()).hexdigest()
+    detectar = _cfg.get("detectar_idioma")
+    idioma = detectar(texto) if detectar else None
+    with _cfg["get_conn"]() as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS fb_avisos_feriado (
+            page_id TEXT, psid_hash TEXT, ts INTEGER, PRIMARY KEY (page_id, psid_hash))""")
+        if c.execute("SELECT 1 FROM fb_avisos_feriado WHERE page_id=? AND psid_hash=?",
+                     (page_id, quien)).fetchone():
+            return
+        if idioma not in ("es", "en"):
+            fila = c.execute("SELECT idioma FROM fb_estado WHERE page_id=? AND psid=?", (page_id, psid)).fetchone()
+            idioma = fila[0] if fila and fila[0] in ("es", "en") else "es"
+    mensaje = _cfg["aviso_feriado"](idioma)
+    if mensaje and _enviar(page_id, psid, mensaje):
+        with _cfg["get_conn"]() as c:
+            c.execute("INSERT OR IGNORE INTO fb_avisos_feriado VALUES (?,?,?)", (page_id, quien, int(time.time())))
+        _metrica(page_id, "respuestas")
+
+
 def _contestar(page_id: str, psid: str, texto: str, mid: str, forzar: bool = False) -> None:
     _no_disp.discard((page_id, psid))  # volvió a escribir: ya se le puede responder
     with _cfg["get_conn"]() as c:
@@ -889,13 +916,20 @@ def _contestar(page_id: str, psid: str, texto: str, mid: str, forzar: bool = Fal
         print(f"[messenger] {quien}: conversación pausada, no respondo", flush=True)
         return  # pidió que no le escriban
     if not forzar and not _cfg["abierto"]():
-        # Fuera de horario: no contestamos. El mensaje queda sin leer en la bandeja (el MB lo puede atender)
-        # y la IA lo responde al abrir, si sigue dentro de las 24 h de Meta.
+        feriado = bool(_cfg.get("aviso_feriado", lambda: "")())
+        if feriado and _cfg["es_baja"](texto):
+            with _cfg["get_conn"]() as c:
+                c.execute("""INSERT INTO fb_estado (page_id, psid, pausado) VALUES (?,?,1)
+                             ON CONFLICT(page_id, psid) DO UPDATE SET pausado=1, avisar=0""", (page_id, psid))
+            return
+        # La cola sigue el flujo normal de reapertura; solo el feriado tiene aviso inmediato.
         with _cfg["get_conn"]() as c:
             c.execute("CREATE TABLE IF NOT EXISTS fb_cola (page_id TEXT, psid TEXT, texto TEXT, ts INTEGER)")
             c.execute("INSERT INTO fb_cola VALUES (?,?,?,?)", (page_id, psid, texto, int(time.time())))
         _metrica(page_id, "en_espera_fuera_horario")
         print(f"[messenger] {quien}: fuera de horario — en espera hasta abrir", flush=True)
+        if feriado:
+            _avisar_feriado(page_id, psid, texto)
         return
     if time.time() - _ultima_purga[0] > 86400:
         with _cfg["get_conn"]() as c:

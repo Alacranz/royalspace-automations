@@ -643,6 +643,23 @@ BUSINESS_HOURS = {
     # Sunday: closed
 }
 
+# Cierre de Thanksgiving 2026; las clínicas vuelven el lunes 30 a las 09:00 ET.
+# Acotado a este año: no altera el horario recurrente ni requiere otro despliegue.
+THANKSGIVING_CLOSE = BUSINESS_TZ.localize(datetime(2026, 11, 26))
+THANKSGIVING_REOPEN = BUSINESS_TZ.localize(datetime(2026, 11, 30, 9))
+
+
+def aviso_feriado(lang: str = "es", now: datetime | None = None) -> str:
+    now = datetime.now(BUSINESS_TZ) if now is None else now
+    if not THANKSGIVING_CLOSE <= now < THANKSGIVING_REOPEN:
+        return ""
+    if lang == "en":
+        return ("Our dental clinics are closed for Thanksgiving. "
+                "We'll reopen on Monday, November 30, at 9:00 a.m. Eastern time.")
+    return ("Nuestras clínicas dentales están cerradas por el feriado de Thanksgiving. "
+            "Volvemos a atender el lunes 30 de noviembre a las 9:00 a. m., hora del Este.")
+
+
 DAY_NAMES_ES = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado"}
 DAY_NAMES_EN = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday"}
 
@@ -650,6 +667,9 @@ DAY_NAMES_EN = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Fr
 def get_next_open_label(lang: str = "es") -> str:
     """Returns 'hoy a las 9:00 AM' / 'mañana…' / 'el lunes…' in the right language."""
     now = datetime.now(BUSINESS_TZ)
+    if aviso_feriado(lang, now):
+        return ("on Monday, November 30, at 9:00 a.m. Eastern time" if lang == "en"
+                else "el lunes 30 de noviembre a las 9:00 a. m., hora del Este")
     # Same day: not open yet (before 9 AM)
     if BUSINESS_HOURS.get(now.weekday()) and now.hour < 9:
         return "hoy a las 9:00 AM" if lang != "en" else "today at 9:00 AM"
@@ -665,8 +685,10 @@ def get_next_open_label(lang: str = "es") -> str:
     return "pronto" if lang != "en" else "soon"
 
 
-def is_business_hours() -> bool:
-    now = datetime.now(BUSINESS_TZ)
+def is_business_hours(now: datetime | None = None) -> bool:
+    now = datetime.now(BUSINESS_TZ) if now is None else now.astimezone(BUSINESS_TZ)
+    if aviso_feriado(now=now):
+        return False
     hours = BUSINESS_HOURS.get(now.weekday())
     if not hours:
         return False
@@ -864,6 +886,16 @@ def responder(req: ChatRequest) -> dict:
     if is_opt_out(text):
         save_message(req.subscriber_id, "user", text)
         return {"response": "", "action": "pause", "detected_zip": ""}
+
+    # El aviso de cierre no depende de una respuesta generada ni invita a llamar.
+    if aviso_feriado():
+        lang = detect_language(text)
+        if lang not in ("es", "en"):
+            lang = get_subscriber_language(req.subscriber_id) or "es"
+        aviso = aviso_feriado(lang)
+        if aviso:
+            return {"response": aviso, "action": "respond", "detected_zip": "",
+                    "language": lang, "tags": [], "abierto": False}
 
     # ── Historial y contexto ──────────────────────────────────────────────────
     history_full = get_history(req.subscriber_id)
@@ -1133,7 +1165,8 @@ except ImportError:
     import messenger_direct  # noqa: E402
 messenger_direct.configurar(responder=responder, chat_request=ChatRequest, get_conn=get_conn,
                             detectar_idioma=detect_language, abierto=is_business_hours,
-                            proxima_apertura=get_next_open_label)
+                            proxima_apertura=get_next_open_label, aviso_feriado=aviso_feriado,
+                            es_baja=is_opt_out)
 app.include_router(messenger_direct.router)
 
 try:
