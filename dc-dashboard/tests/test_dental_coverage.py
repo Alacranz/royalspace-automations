@@ -19,14 +19,14 @@ def ping(cid, **changes):
 def call(cid, **changes):
     return {
         "id": cid, "CampaignId": CAMPAIGN, "createdAt": NOW.isoformat(), "callStatus": "COMPLETED",
-        "DestinationId": "dest-a", "CallDurationFromConnect": 90, "CallRevenue": "20.00", **changes,
+        "DestinationId": "dest-a", "CallDurationFromConnect": 90, "CallRevenue": "20.00", "CallBillable": True, **changes,
     }
 
 
 class CoverageTests(TestCase):
     def test_counts_one_attempt_per_buyer_and_call(self):
         pings = [ping("a"), ping("a"), ping("b"), ping("c", PingAccepted=0, PingResponseCode="1006")]
-        calls = [call("a"), call("b", CallRevenue="0")]
+        calls = [call("a"), call("b", CallBillable=False)]
         result = observe(pings, calls, NOW)
         self.assertEqual(1, len(result))
         cell = result[0]
@@ -46,7 +46,7 @@ class CoverageTests(TestCase):
              ping("c", PingBidAmount=0)]
         rows = observe(p, [call("a"), call("b"), call("c")], NOW)
         self.assertEqual(1, len(rows))
-        self.assertEqual((1, 0, 0), (rows[0]["attempts"], rows[0]["offers"], rows[0]["connected"]))
+        self.assertEqual((1, 0, 1), (rows[0]["attempts"], rows[0]["offers"], rows[0]["connected"]))
 
     def test_landing_provenance_and_language_are_independent(self):
         r = observe([ping("a"), ping("b", RoutingPlanName="English - LP", VisitorZipCode="01234", IVRZip="")],
@@ -56,7 +56,7 @@ class CoverageTests(TestCase):
     def test_old_connects_do_not_label_current_coverage(self):
         old = (NOW-timedelta(minutes=42)).isoformat()
         a = [ping("a", createdAt=old), ping("b", createdAt=old), ping("c")]
-        rows = observe(a, [call("a"), call("b")], NOW)
+        rows = observe(a, [call("a", createdAt=old), call("b", createdAt=old)], NOW)
         self.assertEqual("Conexión aislada", rows[0]["status"])
 
     def test_rejected_sample_vs_technical_rejection(self):
@@ -65,6 +65,27 @@ class CoverageTests(TestCase):
         rows = {r["buyer"]:r for r in observe(a, [],NOW)}
         self.assertEqual("Sin puja observada", rows["Buyer A"]["status"])
         self.assertEqual("Error o límite técnico", rows["Buyer B"]["status"])
+
+    def test_static_call_only_with_official_billable_flag(self):
+        static = call("static", BuyerName="(1521)ClickDealer", DestinationId="static",
+                      RoutingPlanName="Spanish - Messenger", ZipCode="92211", IVRZip="92211",
+                      CallDurationFromConnect=2, CallRevenue="9", CallBillable="false")
+        row = observe([], [static, static], NOW)[0]
+        self.assertEqual(("ClickDealer", 0, 1, 0), tuple(row[k] for k in ("buyer", "offers", "connected", "billable")))
+        self.assertEqual("Conexión aislada", row["status"])
+        bids = [ping("static", BuyerName="ClickDealer", DestinationId="static", ZipCode="92211", IVRZip="92211")]
+        row = observe(bids, [static], NOW)[0]
+        self.assertEqual((1, 1, 1), tuple(row[k] for k in ("attempts", "offers", "connected")))
+
+    def test_losing_offer_and_static_connection_attributed_separately(self):
+        static = call("same", BuyerName="Buyer B", DestinationId="static",
+                      RoutingPlanName="Spanish - Messenger", ZipCode="01234", IVRZip="01234",
+                      CallBillable="true", CallRevenue="0")
+        rows = {r["buyer"]: r for r in observe([ping("same")], [static], NOW)}
+        self.assertEqual((1, 0), (rows["Buyer A"]["offers"], rows["Buyer A"]["connected"]))
+        self.assertEqual((0, 1, 1), tuple(rows["Buyer B"][k] for k in ("offers", "connected", "billable")))
+        static["IVRZip"] = "00001"
+        self.assertEqual(["Buyer A"], [r["buyer"] for r in observe([ping("same")], [static], NOW)])
 
     @patch("app.callgrid.coverage.requests.get")
     def test_api_cursor_and_campaign_filter(self, get):
