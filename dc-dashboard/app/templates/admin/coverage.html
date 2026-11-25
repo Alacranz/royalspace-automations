@@ -23,7 +23,7 @@
     <div class="card rounded overflow-auto">
       <table class="w-full text-sm" aria-label="Cobertura reciente por ZIP, idioma y comprador">
         <thead><tr class="text-left border-b">
-          {% for heading in ('ZIP / estado','Idioma','Comprador','Señal','Intentos','Ofertas','Conectadas','Facturables','Última conexión*') %}<th class="p-2 whitespace-nowrap" scope="col">{{ heading }}</th>{% endfor %}
+          {% for heading in ('ZIP / estado','Idioma','Comprador','Señal','Llamadas observadas','Ofertas','Conectadas','Facturables','Última conexión*') %}<th class="p-2 whitespace-nowrap" scope="col">{{ heading }}</th>{% endfor %}
         </tr></thead>
         <tbody>
           {% for row in rows %}
@@ -38,7 +38,7 @@
         </tbody>
       </table>
     </div>
-    <p class="text-xs text-gray-400 mt-3">Un intento por llamada y buyer. Sin ZIP válido de landing o IVR, no se usa la llamada. Dos conexiones en 30 min con al menos tres intentos en la ventana se marcan como señal repetida. *Hora ET del ping asociado a la llamada conectada.</p>
+    <p class="text-xs text-gray-400 mt-3">Cada llamada se cuenta una vez por comprador. Ofertas y conexiones se miden por separado; una línea fija puede conectar sin puja. Solo se usan ZIP de landing o IVR. La señal repetida requiere al menos tres llamadas observadas y dos conexiones de más de dos segundos o facturables en los últimos 30 min. *Hora del registro de la llamada en CallGrid (ET).</p>
     <script>
       setInterval(function () {
         if (document.visibilityState === "visible" && !document.activeElement.closest("form")) location.reload();
