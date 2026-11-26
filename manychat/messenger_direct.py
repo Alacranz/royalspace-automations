@@ -296,13 +296,19 @@ def _rehacer_idiomas() -> None:
                 if eid:
                     with _cfg["get_conn"]() as c:
                         c.execute("INSERT OR REPLACE INTO fb_etiquetas VALUES (?,?,?)", (pid, et, str(eid)))
-            ok = no = 0
+            ok = no = seguidos = 0
             for psid, idioma in contactos.items():
                 if _etiquetar_una_vez(pid, psid, ETIQUETAS_IDIOMA[idioma]):
                     ok += 1
+                    seguidos = 0
                 else:
                     no += 1
-                time.sleep(0.2)
+                    seguidos += 1
+                    if seguidos >= 5 and _sesion_caida(pid):
+                        print(f"[messenger] IDIOMAS: Meta rechazó el token en {nombre} — detengo todo", flush=True)
+                        _estado_sistema("rehacer_idiomas_detenido", nombre)
+                        return
+                time.sleep(1)
             print(f"[messenger] IDIOMAS REHECHOS {nombre}: borradas {borradas} de {len(viejas)} viejas · "
                   f"{ok} contactos etiquetados · {no} no aceptaron", flush=True)
         except Exception as e:
@@ -310,6 +316,15 @@ def _rehacer_idiomas() -> None:
             print(f"[messenger] IDIOMAS REHECHOS {nombre}: error {type(e).__name__}: {str(e)[:120]}", flush=True)
     if not errores:
         _estado_sistema("rehacer_idiomas", marca)
+
+
+def _sesion_caida(pid: str) -> bool:
+    """True si Meta invalidó el token de la página (error 190): no tiene sentido seguir."""
+    try:
+        r = requests.get(f"{GRAPH}/me", params={"access_token": _token(pid), "fields": "id"}, timeout=15)
+        return r.status_code != 200 and (r.json() or {}).get("error", {}).get("code") == 190
+    except Exception:
+        return False
 
 
 def _estado_sistema(clave: str, valor: str) -> None:
