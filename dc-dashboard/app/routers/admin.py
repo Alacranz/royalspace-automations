@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -48,6 +49,29 @@ def overview(request: Request, db: Session = Depends(get_db), user: User = Depen
     return templates.TemplateResponse(
         request, "admin/overview.html",
         {"user": user, "partners": partners, "media_buyers": media_buyers, "last_sync": last_sync},
+    )
+
+
+@router.get("/coverage")
+def coverage_radar(request: Request, zip_code: str = "", lang: str = "", buyer: str = "",
+                   user: User = Depends(get_current_user)):
+    # The router enforces admin authorization before this handler can fetch any data.
+    from app.callgrid.coverage import snapshot, view_filters
+    from app.config import CALLGRID_API_KEY, CALLGRID_ORG_ID
+
+    data = snapshot(CALLGRID_API_KEY, CALLGRID_ORG_ID)
+    et = ZoneInfo("America/New_York")
+
+    def display(value):
+        return datetime.fromisoformat(value).astimezone(et).strftime("%d/%m %H:%M") if value else None
+
+    filters = view_filters(data.get("rows", []), zip_code, lang, buyer)
+    filters["rows"] = [{**row, "latest_connected_et": display(row["latest_connected"])}
+                       for row in filters["rows"]]
+    return templates.TemplateResponse(
+        request, "admin/coverage.html",
+        {"user": user, "snapshot": data, "checked_at": display(data.get("as_of")), **filters},
+        headers={"Cache-Control": "private, no-store"},
     )
 
 
